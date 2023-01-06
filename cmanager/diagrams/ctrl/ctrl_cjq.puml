@@ -1,0 +1,9 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+Controller -> NetworkManager : broadcast(cjq_request)
+    create TimerTask
+    Controller -> TimerTask : new(event_canal)
+@enduml

@@ -1,0 +1,24 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+?-> Controller
+Controller -> Controller : updates = null
+
+loop true
+    Controller -> CGraph : next_test()
+    activate CGraph
+    CGraph --> Controller : test
+    deactivate CGraph
+    alt test != null
+        Controller -> PerfsCtrl : start_perf(test)
+        activate PerfsCtrl
+        PerfsCtrl --> Controller : perf_result
+        deactivate PerfsCtrl
+        Controller -> CGraph : update(perf_result)
+        Controller -> Controller : updates += perf_result
+    end
+end
+?<-- Controller : updates
+
+@enduml

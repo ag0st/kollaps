@@ -1,0 +1,39 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+?-> PerfsCtrl : start_test(target)
+activate PerfsCtrl
+PerfsCtrl -> NetworkManager : send(start_test)
+activate NetworkManager
+NetworkManager --> PerfsCtrl : ok
+deactivate NetworkManager
+
+PerfsCtrl -> PerfsCtrl : start_iperf3_client(target)
+activate PerfsCtrl
+
+PerfsCtrl -> PerfsCtrl : create msgq
+create IPerfTask
+PerfsCtrl -> IPerfTask : new(msgq)
+PerfsCtrl -> IPerfTask : start_client(target)
+
+
+activate IPerfTask
+IPerfTask -> IPerfTask : launch iperf3
+IPerfTask -> IPerfTask : parse iperf3_result
+IPerfTask -> IPerfTask : msgq += parsed_iperf3_result
+deactivate IPerfTask
+
+destroy IPerfTask
+
+PerfsCtrl -> PerfsCtrl : speed_result = read(msgq)
+note left : read is blocking
+
+PerfsCtrl -> PerfsCtrl : speed_result
+
+deactivate PerfsCtrl
+
+?<--PerfsCtrl : speed_result
+deactivate PerfsCtrl
+@enduml

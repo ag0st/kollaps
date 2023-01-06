@@ -1,0 +1,78 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+loop true
+    Controller -> event_canal : read
+    activate event_canal
+    note right : blocking
+    event_canal --> Controller : event
+    deactivate event_canal
+
+    alt event == cgraph_update(cgraph)
+        Controller -> Controller : adding_new_node = true
+        Controller -> Controller : still_leader = are_we_leader(cgraph)
+        activate Controller
+        Controller --> Controller : still_leader
+        deactivate Controller
+        alt still_leader
+            Controller -> CGraph : update(cgraph)
+        end
+
+    else event == cjq_timeout
+        alt !waiting
+            hnote over Controller : I am the actual leader (first)
+            Controller -> Controller : is_leader = true
+            create cgraph
+            Controller -> cgraph : new(node=1)
+        end
+        hnote over Controller : Ignore, waiting for redo if waiting
+
+    else event == cjq_response
+        alt response == Accepted(info)
+            Controller -> NetworkManager : get_graph(info)
+            activate NetworkManager
+            NetworkManager --> Controller : cgraph
+            deactivate NetworkManager
+            create CGraph
+            Controller -> CGraph : new(cgraph)
+            Controller -> Controller : complete_graph()
+            activate Controller
+            Controller --> Controller : updates
+            deactivate Controller
+            Controller -> CGraph : are_we_leader()
+            activate CGraph
+            CGraph --> Controller : are_we_new_leader
+            deactivate CGraph
+            alt are_we_new_leader
+                Controller -> NetworkManager : send(cgraph_update(empty))
+                Controller -> Controller : is_leader = true
+            else
+                Controller -> NetworkManager : send(cgraph_update(updates))
+            end
+        else response == Wait(info)
+            create TimerTask
+            Controller -> TimerTask : new(cjq_retry, duration)
+            Controller -> Controller : waiting = true
+        end
+
+    else event == cjq_request
+        alt is_leader
+            Controller -> NetworkManager : open_cgraph_download()
+            alt adding_new_node
+                Controller -> NetworkManager : send(cjq_response(Wait(local_info)))
+            else !adding_new_node
+                Controller -> NetworkManager : send(cjq_response(Accept(local_info)))
+                Controller -> Controller : adding_new_node = true
+            end
+        end
+
+    else event == cjq_retry
+        Controller -> Controller : cluster_joining_query()
+
+    else event == c_heartbeat
+        Controller -> NetworkManager : send(c_heartbeat)
+    end
+end
+@enduml

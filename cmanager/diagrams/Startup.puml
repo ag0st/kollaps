@@ -1,0 +1,34 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+create Controller
+Main -> Controller : new
+activate Controller
+
+Controller -> Controller : Choose params
+
+create Event_Canal
+Controller -> Event_Canal : new
+
+create NetworkManager
+Controller -> NetworkManager : new(event_canal)
+create PerfsCtrl
+Controller -> PerfsCtrl : new(NetworkManager)
+Controller -> NetworkManager : set_perfs_ctrl(PerfsCtrl)
+
+deactivate Controller
+Main -> Controller : start()
+activate Controller
+
+Controller -> NetworkManager : listen(udp_port, tcp_port)
+
+alt new_cluster
+    Controller -> Controller : create_new_cluster()
+else !new_cluster
+    Controller -> Controller : cluster_joining_query()
+end
+Controller -> Controller : listen_on_events(event_canal)
+deactivate Controller
+@enduml
