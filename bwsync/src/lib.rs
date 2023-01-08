@@ -4,18 +4,18 @@ use tokio::sync::mpsc;
 
 
 #[derive(Debug)]
-enum Command {
+pub enum Command {
     ACTIVATE,
     DEACTIVATE,
     UPDATE,
 }
 
 #[derive(Debug, Eq, Clone, Copy)]
-struct Flow {
-    source: usize,
-    destination: usize,
+pub struct Flow {
+    pub source: usize,
+    pub destination: usize,
     bandwidth: usize,
-    target_bandwidth: usize,
+    pub target_bandwidth: usize,
 }
 
 impl PartialEq for Flow {
@@ -31,12 +31,12 @@ impl Hash for Flow {
 }
 
 impl Flow {
-    fn build(source: usize, destination: usize, bandwidth: usize, target_bandwidth: usize) -> Flow {
+    pub fn build(source: usize, destination: usize, bandwidth: usize, target_bandwidth: usize) -> Flow {
         Flow { source, destination, bandwidth, target_bandwidth }
     }
 }
 
-async fn launch_node(graph: netgraph::Network, node_list: Vec<mpsc::Sender<(Command, Flow)>>, mut receiver: mpsc::Receiver<(Command, Flow)>, id: usize) {
+pub async fn launch_node(graph: netgraph::Network, node_list: Vec<mpsc::Sender<(Command, Flow)>>, mut receiver: mpsc::Receiver<(Command, Flow)>, id: usize) {
     // Used to store the active flows.
     // Node_id (destination) : Bandwidth
     let mut active_flows: HashSet<Flow> = HashSet::new();
