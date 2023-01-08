@@ -5,6 +5,9 @@ members = [
 	"nethelper",
 	"cgraph",
 	"common",
+	"matrix",
+	"netgraph",
+	"bwsync",
 ]
 
 

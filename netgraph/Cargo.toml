@@ -1,5 +1,5 @@
 [package]
-name = "cgraph"
+name = "netgraph"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,6 +7,4 @@ edition = "2021"
 
 [dependencies]
 matrix = { path = "../matrix" }
-netgraph = { path = "../netgraph" }
-serde = { workspace = true }
-rand = { workspace = true }
+rand = "0.8.5"

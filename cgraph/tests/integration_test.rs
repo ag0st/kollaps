@@ -1,8 +1,6 @@
 use std::cmp::min;
 use cgraph::CGraph;
-use crate::netgraph::Network;
-
-mod netgraph;
+use netgraph::Network;
 
 struct TestResult {
     error_count: usize,
@@ -75,7 +73,7 @@ fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: us
         let edge_speed = net.node_speed(i);
         let me = cgraph.add_node(edge_speed, i).expect("cannot add node");
         while let Some(other) = cgraph.find_missing_from_me(me, sufficient) {
-            let speed = net.max_speed(i, other.info());
+            let speed = net.bandwidth_between(i, other.info());
             result.nb_tests += 1;
             let useful = cgraph.add_link_direct_test(me, other, speed).expect("cannot add link");
             if useful { result.nb_useful += 1; }
@@ -86,7 +84,7 @@ fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: us
     for i in 0..speeds_matrix.size() {
         for j in 0..speeds_matrix.size() {
             if i == j { continue; }
-            if speeds_matrix[(i, j)] != net.max_speed(i, j) {
+            if speeds_matrix[(i, j)] != net.bandwidth_between(i, j) {
                 result.error_count += 1
             }
         }

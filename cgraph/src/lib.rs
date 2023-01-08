@@ -7,9 +7,7 @@ use std::io::{Error, ErrorKind};
 
 use serde::{Deserialize, Serialize};
 
-pub mod matrix;
-
-use crate::matrix::SymMatrix;
+use matrix::SymMatrix;
 
 // is_limited : bool, is_direct_tested: bool, speed: usize
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
