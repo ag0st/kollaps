@@ -23,10 +23,10 @@ async fn main() {
     // 1 -> 3 50
     // 3 -> 4 100
     // 4 -> 2 100
-    net.add_edge(0, 3, 100);
-    net.add_edge(1, 3, 50);
-    net.add_edge(3, 4, 100);
-    net.add_edge(4, 2, 100);
+    net.add_edge(&0, &3, 100);
+    net.add_edge(&1, &3, 50);
+    net.add_edge(&3, &4, 100);
+    net.add_edge(&4, &2, 100);
     println!("Graph created!");
 
     println!("Creating communication channels");

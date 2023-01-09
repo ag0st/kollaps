@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use matrix::SymMatrix;
 
-pub trait Vertex: Eq + Hash + Clone + Copy + Display + Serialize + for<'a> Deserialize<'a> {}
+pub trait Vertex: Eq + Hash + Clone + Display + Serialize + for<'a> Deserialize<'a> {}
 
-impl<T: Eq + Hash + Clone + Copy + Display + Serialize + for<'a> Deserialize<'a>> Vertex for T {}
+impl<T: Eq + Hash + Clone + Display + Serialize + for<'a> Deserialize<'a>> Vertex for T {}
 
 #[derive(Clone)]
 pub struct Path<T: Vertex> {
@@ -200,7 +200,7 @@ impl<T: Vertex> Network<T> {
             }
             // create a speed
             let edge_speed = rng.gen_range(0..diff_speeds);
-            net.add_edge(v, a, edge_speed);
+            net.add_edge(&v, &a, edge_speed);
         }
 
         // The internal backbone is created, we can add terminal nodes to it.
@@ -215,7 +215,7 @@ impl<T: Vertex> Network<T> {
             for i in 0..to_place {
                 // generate an edge speed
                 let edge_speed = rng.gen_range(0..diff_speeds);
-                net.add_edge(v, nb_term - remaining_terminal + i, edge_speed);
+                net.add_edge(&v, &(nb_term - remaining_terminal + i), edge_speed);
             }
             remaining_terminal -= to_place;
         }
@@ -275,15 +275,15 @@ impl<T: Vertex> Network<T> {
         }
     }
 
-    pub fn add_edge(&mut self, from: T, to: T, bandwidth: usize) {
-        if let Some((from_inter, to_inter)) = self.map_two(&from, &to) {
-            self.links[(from_inter, to_inter)] = Some(Link::build(from, to, from_inter, to_inter, bandwidth));
+    pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: usize) {
+        if let Some((from_inter, to_inter)) = self.map_two(from, to) {
+            self.links[(from_inter, to_inter)] = Some(Link::build(from.clone(), to.clone(), from_inter, to_inter, bandwidth));
         }
     }
 
     /// Exported method of the update_bandwidth_inter
-    pub fn update_bandwidth(&mut self, from: T, to: T, bandwidth: usize) {
-        if let Some((from, to)) = self.map_two(&from, &to) {
+    pub fn update_bandwidth(&mut self, from: &T, to: &T, bandwidth: usize) {
+        if let Some((from, to)) = self.map_two(from, to) {
             self.update_bandwidth_inter(from, to, bandwidth);
         }
     }
@@ -297,8 +297,8 @@ impl<T: Vertex> Network<T> {
 
     /// Get the bandwidth between two nodes. Uses the strategy defined to find the path,
     /// and then compute the bandwidth between the two nodes along the path.
-    pub fn bandwidth_between(&self, from: T, to: T) -> Option<usize> {
-        if let Some((from, to)) = self.map_two(&from, &to) {
+    pub fn bandwidth_between(&self, from: &T, to: &T) -> Option<usize> {
+        if let Some((from, to)) = self.map_two(from, to) {
             let (val, path) = self.path_between(from);
             // if the strategy is widest path, the "val" contains already the bandwidth between
             // the nodes. Do not need to compute it again.
@@ -325,8 +325,8 @@ impl<T: Vertex> Network<T> {
 
     /// Update the bandwidth along a path between two nodes by applying the function given in parameter.
     /// The function "func" is Fn(old_bandwidth) -> new_bandwidth
-    pub fn update_edges_along_path_by(&mut self, from: T, to: T, func: impl Fn(usize) -> usize) {
-        if let Some((from, to)) = self.map_two(&from, &to) {
+    pub fn update_edges_along_path_by(&mut self, from: &T, to: &T, func: impl Fn(usize) -> usize) {
+        if let Some((from, to)) = self.map_two(from, to) {
             let (_, path) = self.path_between(from);
             let mut last_child = to;
             while let Some(parent) = path[last_child] {
@@ -338,8 +338,8 @@ impl<T: Vertex> Network<T> {
     }
 
     /// Get the path between two nodes in the Path structure representation.
-    pub fn get_path_between(&self, from: T, to: T) -> Option<Path<T>> {
-        if let Some((from, to)) = self.map_two(&from, &to) {
+    pub fn get_path_between(&self, from: &T, to: &T) -> Option<Path<T>> {
+        if let Some((from, to)) = self.map_two(from, to) {
             let (_, parents) = self.path_between(from);
 
             let mut links = Vec::new();
