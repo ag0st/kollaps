@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::io::{Error, ErrorKind, Result};
+use common::{Error, ErrorKind, Result};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -146,7 +146,7 @@ impl Ctrl {
             self.udp_binding.listen()?;
             Ok(())
         } else {
-            Err(Error::new(ErrorKind::Other, "Controller already started"))
+            Err(Error::new("controller init", ErrorKind::AlreadyStarted, "Controller already started"))
         }
     }
 
@@ -559,10 +559,10 @@ impl Ctrl {
                     Ok(Event::CGraphUpdate(WCGraph::new()))
                 }
             }
-            Err(_) => {
-                Err(Error::new(
-                    ErrorKind::Other,
-                    "Failed to get the CGraph from the distant server"))
+            Err(e) => {
+                Err(Error::wrap("cluster add",
+                    ErrorKind::NoResource,
+                    "Failed to get the CGraph from the distant server", e))
             }
         }
     }
@@ -588,7 +588,7 @@ impl Ctrl {
                         let remaining_tries = test_retries - 1 - i;
                         eprintln!("[PERF]: Issue when making test. Remaining tries: [{}]. Error: {}", remaining_tries, e);
                         if remaining_tries <= 0 {
-                            return Err(Error::new(ErrorKind::Other, format!("Exceeded number of tries. Last error: {}", e)));
+                            return Err(Error::wrap("perf", ErrorKind::PerfTestFailed, "Exceeded number of tries.", e));
                         }
                     }
                 }

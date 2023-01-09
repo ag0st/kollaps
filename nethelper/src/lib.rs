@@ -1,8 +1,7 @@
 use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::future::Future;
-use std::io::{Error, ErrorKind};
-use std::io::Result;
+use common::{Error, ErrorKind, ErrorProducer, Result};
 use std::marker::PhantomData;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::pin::Pin;
@@ -14,29 +13,21 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream, UdpSocket};
 use tokio::sync::oneshot;
 
-// // emulate trait alias
-// trait Reader<'a, T>: 'a + FnMut(&mut T) -> Pin<Box<dyn Future<Output=BytesMut>>> + 'a {}
-//
-// impl<'a, T, F> Reader<'a, T> for F
-//     where F: 'a + FnMut(&mut T) -> Pin<Box<dyn Future<Output=BytesMut>>> + 'a {}
-//
-// // convert function into the trait alias
-// fn force_boxed<'a, T: 'a, E>(f: fn(&mut T) -> E) -> impl Reader<'a, T>
-//     where E: Future<Output=BytesMut> + 'static {
-//     move |n: &mut T| Box::pin(f(n)) as _
-// }
-
-
 const CONTENT_LENGTH_LENGTH: usize = 2;
 const BROADCAST_ADDR: &str = "255.255.255.255";
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0:0";
 
+// ------------------------------------------------------------------------------------------------
+//                     DEFINING TO SOCKET TRAIT FOR EASY IP/PORT USE
+
+
 pub trait ToSocketAddr: ToSocketAddrs + Send + Sync {
     fn to_socket_addr(&self) -> Result<SocketAddr> {
+        let producer = Error::producer("socket address");
         let mut addrs = match self.to_socket_addrs() {
             Ok(iter) => iter,
             Err(err) => {
-                return Err(err);
+                return Err(producer.wrap(ErrorKind::NotASocketAddr, "Cannot convert into a Socket Address", err));
             }
         };
         if let Some(addr) = addrs.next() {
@@ -44,7 +35,7 @@ pub trait ToSocketAddr: ToSocketAddrs + Send + Sync {
             // take the first
             Ok(addr)
         } else {
-            Err(Error::new(ErrorKind::Other, String::from("cannot parse socket addr")))
+            Err(producer.create(ErrorKind::NotASocketAddr, "No address found"))
         }
     }
 }
@@ -56,6 +47,10 @@ impl ToSocketAddr for &str {}
 impl ToSocketAddr for SocketAddr {}
 
 impl ToSocketAddr for String {}
+
+
+// ------------------------------------------------------------------------------------------------
+//                           DEFINING TRAITS FOR HANDLERS
 
 
 pub trait ToBytesSerialize {
@@ -88,10 +83,17 @@ impl<T: ToBytesSerialize> Handler<T> for Responder<T> {
 }
 
 // ------------------------------------------------------------------------------------------------
+//                           DEFINING TRAITS ALIASES
 
+pub trait Sendable: 'static + ToBytesSerialize + Send {}
+
+impl<T: 'static + ToBytesSerialize + Send> Sendable for T {}
+
+// ------------------------------------------------------------------------------------------------
+//                            DEFINING TRAITS FOR PROTOCOLS
 
 #[async_trait]
-pub trait ProtoBinding<T: 'static + ToBytesSerialize + Send, H: Handler<T>> {
+pub trait ProtoBinding<T: Sendable, H: Handler<T>> {
     fn set_handler(&mut self, handler: H);
     fn listen(&mut self) -> Result<()>;
     async fn receive(&mut self) -> Result<()>;
@@ -100,7 +102,7 @@ pub trait ProtoBinding<T: 'static + ToBytesSerialize + Send, H: Handler<T>> {
 }
 
 #[async_trait]
-pub trait Protocol<T: 'static + ToBytesSerialize + Send, H: Handler<T>, B: ProtoBinding<T, H> + Send> {
+pub trait Protocol<T: Sendable, H: Handler<T>, B: ProtoBinding<T, H> + Send> {
     async fn bind_addr<'a>(addr: impl ToSocketAddr, handler: Option<H>) -> Result<B>
         where
             B: 'a,
@@ -117,12 +119,14 @@ pub trait Protocol<T: 'static + ToBytesSerialize + Send, H: Handler<T>, B: Proto
 
 
 // -------------------------------------------------------------------------------------------------
+//                                    DEFINING PROTOCOLS
 
+//****************** UDP ***************
 
 pub struct UDP {}
 
 #[async_trait]
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> Protocol<T, H, UDPBinding<T, H>> for UDP {
+impl<T: Sendable, H: Handler<T> + 'static> Protocol<T, H, UDPBinding<T, H>> for UDP {
     async fn bind_addr<'a>(addr: impl ToSocketAddr, handler: Option<H>) -> Result<UDPBinding<T, H>> where
         T: 'a,
         H: 'a
@@ -139,14 +143,14 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> Protocol<T, 
     }
 }
 
-pub struct UDPBinding<T: 'static + ToBytesSerialize + Send, H: Handler<T>> {
+pub struct UDPBinding<T: Sendable, H: Handler<T>> {
     handler: Option<H>,
     socket: Arc<UdpSocket>,
     ignore_list: HashSet<SocketAddr>,
     unit_type: PhantomData<T>,
 }
 
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> UDPBinding<T, H> {
+impl<T: Sendable, H: Handler<T> + 'static> UDPBinding<T, H> {
     pub async fn broadcast(&mut self, data: T, dest_port: u16) -> Result<()> {
         self.socket.set_broadcast(true)?;
         assert_eq!(self.socket.broadcast()?, true);
@@ -161,12 +165,16 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> UDPBinding<T
         self.ignore_list.remove(&val.to_socket_addr().unwrap());
     }
 
+    fn err_producer() -> ErrorProducer {
+        Error::producer("udp binding")
+    }
+
     async fn send_to(socket: Arc<UdpSocket>, to_send: T, addr: impl ToSocketAddr) -> Result<()> {
         let buf = prepare_data_to_send(to_send);
         let addr = addr.to_socket_addr()?;
         let size = socket.send_to(buf.as_ref(), addr).await?;
         if size < buf.len() {
-            Err(Error::new(ErrorKind::WriteZero, String::from("not all the bytes where sent")))
+            Err(Self::err_producer().create(ErrorKind::BadWrite, "not all the bytes where sent"))
         } else {
             Ok(())
         }
@@ -204,7 +212,7 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> UDPBinding<T
 
 
 #[async_trait]
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding<T, H> for UDPBinding<T, H> {
+impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UDPBinding<T, H> {
     fn set_handler(&mut self, handler: H) {
         self.handler = Some(handler);
     }
@@ -219,7 +227,8 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding
         tokio::spawn(async move {
             loop {
                 if let Err(e) = Self::receive_and_handle_from(socket.clone(), handler.clone(), ignore_list.clone()).await {
-                    println!("UDP Socket connection interrupted: {},\n Stop listening..", e);
+                    let e = UDPBinding::<T, H>::err_producer().wrap(ErrorKind::ConnectionInterrupted, "UDP Connection interrupted", e);
+                    eprintln!("{}", e);
                     break;
                 }
             }
@@ -240,7 +249,7 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding
     async fn send(&mut self, to_send: T) -> Result<()> {
         let to_send = prepare_data_to_send(to_send);
         if let Err(e) = self.socket.send(to_send.as_ref()).await {
-            Err(e)
+            Err(e.into())
         } else {
             Ok(())
         }
@@ -248,13 +257,13 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding
 }
 
 
-// -------------------------------------------------------------------------------------------------
+//****************** TCP ***************
 
 
 pub struct TCP {}
 
 #[async_trait]
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> Protocol<T, H, TCPBinding<T, H>> for TCP {
+impl<T: Sendable, H: Handler<T> + 'static> Protocol<T, H, TCPBinding<T, H>> for TCP {
     async fn bind_addr<'a>(addr: impl ToSocketAddr, handler: Option<H>) -> Result<TCPBinding<T, H>> where T: 'a, H: 'a {
         let socket = TcpSocket::new_v4()?;
         // On platforms with Berkeley-derived sockets, this allows to quickly
@@ -281,7 +290,7 @@ enum TCPBindingMode {
     LISTENING(Arc<TcpListener>),
 }
 
-pub struct TCPBinding<T: 'static + ToBytesSerialize + Send, H: Handler<T>> {
+pub struct TCPBinding<T: Sendable, H: Handler<T>> {
     mode: TCPBindingMode,
     handler: Option<H>,
     socket: Option<TcpSocket>,
@@ -289,14 +298,14 @@ pub struct TCPBinding<T: 'static + ToBytesSerialize + Send, H: Handler<T>> {
     unit_type: PhantomData<T>,
 }
 
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T>> TCPBinding<T, H> {
+impl<T: Sendable, H: Handler<T>> TCPBinding<T, H> {
     pub async fn connect(&mut self, addr: impl ToSocketAddr) -> Result<()> {
         let stream = match self.mode {
             TCPBindingMode::None => {
                 self.socket.take().expect("no socket found in TCP Binding... weird")
                     .connect(addr.to_socket_addr()?).await?
             }
-            _ => { return Err(Error::new(ErrorKind::AlreadyExists, String::from("Binding already in a mode"))); }
+            _ => { return Err(Self::err_producer().create(ErrorKind::BadMode, "Binding already in a mode")); }
         };
         self.mode = TCPBindingMode::CONNECTED(stream);
         Ok(())
@@ -320,11 +329,15 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T>> TCPBinding<T, H> {
         Ok((local, peer))
     }
 
+    fn err_producer() -> ErrorProducer {
+        Error::producer("tcp binding")
+    }
+
     fn get_stream(&mut self) -> Result<&mut TcpStream> {
         if let TCPBindingMode::CONNECTED(stream) = self.mode.borrow_mut() {
             Ok(stream)
         } else {
-            Err(Error::new(ErrorKind::Other, String::from("Binding not in good mode")))
+            Err(Self::err_producer().create(ErrorKind::BadMode, "Binding not in good mode"))
         }
     }
 
@@ -343,7 +356,7 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T>> TCPBinding<T, H> {
         let mut buf = vec![0u8; CONTENT_LENGTH_LENGTH];
         let written_size = s.read(&mut buf).await?;
         if written_size == 0 {
-            return Err(Error::new(ErrorKind::UnexpectedEof, "End Of File, stop stream"));
+            return Err(Self::err_producer().create(ErrorKind::UnexpectedEof, "End Of File, stop stream"));
         }
         //
         let size = get_size(buf);
@@ -364,13 +377,12 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T>> TCPBinding<T, H> {
     async fn write_to_stream(stream: &mut TcpStream, x: T) -> Result<()> {
         let buf = prepare_data_to_send(x);
         stream.write_all(buf.as_ref()).await.or_else(|e| {
-            println!("Cannot write on the TCP connection: {}", e);
-            Err(e)
+            Err(Self::err_producer().wrap(ErrorKind::BadWrite, "Cannot write on the TCP connection", e))
         })
     }
 }
 
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T>> Drop for TCPBinding<T, H> {
+impl<T: Sendable, H: Handler<T>> Drop for TCPBinding<T, H> {
     fn drop(&mut self) {
         if let TCPBindingMode::LISTENING(_) = self.mode {
             self.close_channel.take().unwrap().send("stopping accept loop").unwrap()
@@ -380,7 +392,7 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T>> Drop for TCPBinding<T,
 }
 
 #[async_trait]
-impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, H> {
+impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, H> {
     fn set_handler(&mut self, handler: H) {
         self.handler = Some(handler);
     }
@@ -394,7 +406,7 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding
             TCPBindingMode::None => {
                 self.socket.take().expect("no socket found in TCP Binding... weird").listen(1024)?
             }
-            _ => { return Err(Error::new(ErrorKind::AlreadyExists, String::from("Binding already in a mode"))); }
+            _ => { return Err(Self::err_producer().create(ErrorKind::BadMode, "Binding already in a mode")); }
         };
         let listener = Arc::new(listener);
         let (tx, rx) = oneshot::channel();
@@ -460,12 +472,15 @@ impl<T: 'static + ToBytesSerialize + Send, H: Handler<T> + 'static> ProtoBinding
         }
         self.send(to_send).await
     }
+
     async fn send(&mut self, to_send: T) -> Result<()> {
         let stream = self.get_stream()?;
         Self::write_to_stream(stream, to_send).await
     }
 }
 
+// ------------------------------------------------------------------------------------------------
+//                                  UTILITY FUNCTIONS
 
 /// Transform a vector of byte defining in binary a number (a size) and transform it into a usize.
 /// Used to transform the first bytes of an incoming communication into a size regarding the protocol.
@@ -495,33 +510,3 @@ pub fn prepare_data_to_send<T: ToBytesSerialize>(data: T) -> BytesMut {
     buf.put_slice(data.to_vec().as_ref());
     buf
 }
-
-// pub struct NetworkManager {}
-//
-// impl NetworkManager {
-//     pub fn new() -> NetworkManager {
-//         NetworkManager {}
-//     }
-//
-//     pub async fn bind_and_listen<T>(&self,
-//                                     addr: impl ToSocketAddr,
-//                                     proto: impl Protocol<T>,
-//                                     handler: Responder<T>) -> Result<()>
-//         where T: 'static + ToBytesSerialize + Send,
-//     {
-//         let mut proto_binding = proto.bind(addr, Some(handler)).await?;
-//         proto_binding.listen()
-//     }
-//
-//     pub async fn broadcast_and_listen<T>(&self, data: T, dest_port: u16,
-//                                          handler: Responder<T>) -> Result<()>
-//         where T: 'static + ToBytesSerialize + Send {
-//         let proto = UDP {};
-//         let mut proto_binding = proto.bind("0.0.0.0:0", Some(handler)).await?;
-//         proto_binding.broadcast(data, dest_port).await?;
-//         proto_binding.listen()
-//     }
-//
-//
-// }
-

@@ -1,7 +1,6 @@
-use std::{io, vec};
+use std::vec;
 use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
-use std::io::{ErrorKind, Result};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::ops::{Deref, DerefMut};
 use std::time::Duration;
@@ -10,6 +9,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
 use cgraph::CGraph;
+use common::{Error, ErrorKind, Result};
 use nethelper::{ToBytesSerialize, ToSocketAddr};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]
@@ -36,7 +36,7 @@ impl PartialEq for NodeInfo {
 impl ToSocketAddrs for NodeInfo {
     type Iter = vec::IntoIter<SocketAddr>;
 
-    fn to_socket_addrs(&self) -> Result<Self::Iter> {
+    fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
         (self.ip_addr.clone(), self.port.clone()).to_socket_addrs()
     }
 }
@@ -171,7 +171,7 @@ impl Event {
             0x000B => Ok(Event::CHeartbeatCheck),
             0x000C => Ok(Event::CHeartbeatReset),
             0x000D => Ok(Event::CJQAbort),
-            _ => Err(io::Error::new(ErrorKind::Other, format!("cannot decrypt {opcode}.")))
+            _ => Err(Error::new("opcode to event", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
 

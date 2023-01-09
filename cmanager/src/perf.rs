@@ -1,5 +1,4 @@
-use std::io::{Error, ErrorKind};
-use std::io::Result;
+use common::{Error, ErrorKind, Result};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -105,7 +104,7 @@ impl PerfCtrl {
                 let mbps = (bps as u64) >> 20;
                 Ok(mbps as usize)
             }
-            Err(_) => Err(Error::new(ErrorKind::Other, String::from("error launching the perf test")))
+            Err(e) => Err(Error::wrap("perf", ErrorKind::CommandFailed, "error launching the perf test", e))
         };
         // The mutex is dropped, ready for next test
         res
