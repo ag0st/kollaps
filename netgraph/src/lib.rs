@@ -1,55 +1,92 @@
 use std::borrow::BorrowMut;
-use std::cmp::{min, Ordering};
-use std::collections::HashSet;
+use std::cmp::{max, min, Ordering};
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::mem;
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
-use matrix::Matrix;
+use matrix::SymMatrix;
+
+pub trait Vertex: Eq + Hash + Clone + Copy + Display + Serialize + for<'a> Deserialize<'a> {}
+
+impl<T: Eq + Hash + Clone + Copy + Display + Serialize + for<'a> Deserialize<'a>> Vertex for T {}
 
 #[derive(Clone)]
-pub struct Path {
-    edges: Vec<Edge>,
-    edges_set: HashSet<Edge>,
+pub struct Path<T: Vertex> {
+    links: Vec<Link<T>>,
+    links_set: HashSet<Link<T>>,
 }
 
-impl Path {
-    pub fn new() -> Path {
+impl<T: Vertex> Path<T> {
+    pub fn new() -> Path<T> {
         Path {
-            edges: Vec::new(),
-            edges_set: HashSet::new(),
+            links: Vec::new(),
+            links_set: HashSet::new(),
         }
     }
 
-    pub fn shared_edges(&self, other: &Path) -> HashSet<Edge> {
-        self.edges_set
-            .intersection(&other.edges_set)
+    pub fn shared_edges(&self, other: &Path<T>) -> HashSet<Link<T>> {
+        self.links_set
+            .intersection(&other.links_set)
             .map(|e| e.clone())
-            .collect::<HashSet<Edge>>()
+            .collect::<HashSet<Link<T>>>()
     }
 }
 
-#[derive(Copy, Clone, Eq, Ord)]
-pub struct Edge {
-    source: usize,
-    destination: usize,
-    pub speed: usize,
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub enum Duplex {
+    HalfDuplex,
+    FullDuplex,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Link<T> {
+    /// Internal source and destination store the index
+    /// in the graph where point source, resp. destination.
+    /// It is use then to be able to produce the same hash for two links with permuted (source, destination)
+    /// as usize can be ordered and we can place the smaller first in the hash method to produce consistent hash.
+    /// We could have ask to implement Ord for T but it does not make sense for the user of the lib.
+    internal_source: usize,
+    internal_destination: usize,
+    pub source: T,
+    pub destination: T,
+    pub bandwidth: usize,
+    pub duplex: Duplex,
+}
+
+impl<T: Vertex> Clone for Link<T> {
+    fn clone(&self) -> Self {
+        Self {
+            internal_source: self.internal_source.clone(),
+            internal_destination: self.internal_destination.clone(),
+            source: self.source.clone(),
+            destination: self.destination.clone(),
+            bandwidth: self.bandwidth,
+            duplex: self.duplex,
+        }
+    }
 }
 
 // For now, bidirectional edges
-impl PartialEq for Edge {
+impl<T: Vertex> PartialEq for Link<T> {
     fn eq(&self, other: &Self) -> bool {
         (self.source == other.source && self.destination == other.destination) ||
             (self.destination == other.source && self.source == other.destination)
     }
 }
 
-// For now, bidirectional edges
-impl Hash for Edge {
+impl<T: Vertex> Eq for Link<T> {}
+
+/// The Hash of a link is consistent. It means that for two links A, B
+/// if (A.source = B.destination and A.destination = B.source) or (A.source = B.source and A.destination = B.destination) then,
+/// the hash will be the same for A and B.
+impl<T: Vertex> Hash for Link<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let mut src = self.source;
-        let mut dest = self.destination;
+        let mut src = self.internal_source;
+        let mut dest = self.internal_destination;
         if src > dest {
             mem::swap(&mut src, &mut dest);
         }
@@ -57,11 +94,12 @@ impl Hash for Edge {
     }
 }
 
-impl PartialOrd for Edge {
+/// A link is ordered regarding its speed.
+impl<T: Vertex> PartialOrd for Link<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.speed < other.speed {
+        if self.bandwidth() < other.bandwidth() {
             Some(Ordering::Less)
-        } else if self.speed > other.speed {
+        } else if self.bandwidth() > other.bandwidth() {
             Some(Ordering::Greater)
         } else {
             Some(Ordering::Equal)
@@ -69,42 +107,80 @@ impl PartialOrd for Edge {
     }
 }
 
-impl Edge {
-    pub fn build(mut source: usize, mut destination: usize, speed: usize) -> Edge {
-        if source > destination {
-            mem::swap(&mut source, &mut destination);
-        }
-        Edge {
+impl<T: Vertex> Ord for Link<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl<T: Vertex> Link<T> {
+    fn build(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: usize) -> Link<T> {
+        Link {
+            internal_source,
+            internal_destination,
             source,
             destination,
-            speed,
+            bandwidth,
+            duplex: Duplex::FullDuplex,
+        }
+    }
+
+    pub fn set_duplex(&mut self, duplex: Duplex) {
+        self.duplex = duplex;
+    }
+
+    pub fn bandwidth(&self) -> usize {
+        match self.duplex {
+            Duplex::FullDuplex => self.bandwidth,
+            Duplex::HalfDuplex => self.bandwidth / 2,
         }
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct Network {
-    edges: Matrix<Option<Edge>>,
-    nb_inter: usize,
-    nb_term: usize,
+#[derive(Clone, Serialize, Deserialize)]
+pub enum PathStrategy {
+    WidestPath,
+    ShortestPath,
 }
 
 #[allow(dead_code)]
-impl Network {
-    pub fn new(nb_inter: usize, nb_term: usize) -> Network {
+#[derive(Serialize, Deserialize)]
+pub struct Network<T: Eq + Hash> {
+    links: SymMatrix<Option<Link<T>>>,
+    mapper: HashMap<T, usize>,
+    path_strategy: PathStrategy,
+}
+
+impl<T: Vertex> Clone for Network<T> {
+    fn clone(&self) -> Self {
         Network {
-            edges: Matrix::new_fn(nb_inter + nb_term, |_, _| None),
-            nb_inter,
-            nb_term,
+            links: self.links.clone(),
+            mapper: self.mapper.clone(),
+            path_strategy: self.path_strategy.clone(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl<T: Vertex> Network<T> {
+    pub fn new(vertices: &Vec<T>, path_strategy: PathStrategy) -> Network<T> {
+        Network {
+            links: SymMatrix::new_fn(vertices.len(), |_, _| None),
+            mapper: (0..vertices.len())
+                .fold(HashMap::new(), |mut acc, i| {
+                    acc.insert(vertices[i].clone(), i);
+                    acc
+                }),
+            path_strategy,
         }
     }
 
-    pub fn generate_random_network(nb_inter: usize, nb_term: usize, diff_speeds: usize) -> Network {
+    pub fn generate_random_network(nb_inter: usize, nb_term: usize, diff_speeds: usize, path_strategy: PathStrategy) -> Network<usize> {
         // create random generator
         let mut rng = rand::thread_rng();
         // create the network
-        let mut net = Network::new(nb_inter, nb_term);
+        let vertices = (0..nb_term + nb_inter).collect();
+        let mut net = Network::new(&vertices, path_strategy);
 
         // creating internal nodes
         let mut visited_nodes: Vec<usize> = Vec::new();
@@ -148,130 +224,196 @@ impl Network {
     }
 
     /// This method print the graph in latex format using tikzpicture.
-    pub fn print_graph(&self) {
-        let name_function = |x: usize| {
-            if x < self.nb_term { format!("{x}") } else { format!("S{}", x - self.nb_term) }
-        };
-        let attributes = |i: usize, j: usize| {
-            let mut attr = String::new();
-            if i >= self.nb_term && j >= self.nb_term {
-                attr.push_str(&*format!(" color=\"red\" penwidth=2.0"))
+    // pub fn print_graph(&self) {
+    //     let name_function = |x: usize| {
+    //         if x < self.nb_term { format!("{x}") } else { format!("S{}", x - self.nb_term) }
+    //     };
+    //     let attributes = |i: usize, j: usize| {
+    //         let mut attr = String::new();
+    //         if i >= self.nb_term && j >= self.nb_term {
+    //             attr.push_str(&*format!(" color=\"red\" penwidth=2.0"))
+    //         }
+    //         attr
+    //     };
+    //     println!("graph network_graph {{");
+    //     for i in 0..self.edges.size() {
+    //         for j in 0..i {
+    //             if let Some(edge) = self.edges[(i, j)] {
+    //                 let name_1 = name_function(i);
+    //                 let name_2 = name_function(j);
+    //                 println!("\t{} -- {} [label={}{}];", name_1, name_2, edge.speed(), attributes(i, j));
+    //             }
+    //         }
+    //     }
+    //     // print the color of each bridges
+    //     for i in self.nb_term..self.edges.size() {
+    //         let name = name_function(i);
+    //         println!("\t{} [color=\"red\"]", name)
+    //     }
+    //     println!("}}")
+    // }
+
+    /// Map allow to easily convert a vertex given by a user into its internal representation
+    /// (which is its index in the graph)
+    /// If the vertex is not in the graph, None is returned.
+    fn map(&self, vertex: &T) -> Option<usize> {
+        if let Some(vertex) = self.mapper.get(vertex) {
+            Some(vertex.clone())
+        } else {
+            eprintln!("[NETGRAPH]: Vertex {} is not in the graph", vertex);
+            None
+        }
+    }
+
+    /// Utility function that call self.map two times and return only if both vertex are in the graph.
+    fn map_two(&self, vertex1: &T, vertex2: &T) -> Option<(usize, usize)> {
+        let ver1 = self.map(vertex1);
+        let ver2 = self.map(vertex2);
+        match (ver1, ver2) {
+            (Some(a), Some(b)) => Some((a.clone(), b.clone())),
+            _ => None
+        }
+    }
+
+    pub fn add_edge(&mut self, from: T, to: T, bandwidth: usize) {
+        if let Some((from_inter, to_inter)) = self.map_two(&from, &to) {
+            self.links[(from_inter, to_inter)] = Some(Link::build(from, to, from_inter, to_inter, bandwidth));
+        }
+    }
+
+    /// Exported method of the update_bandwidth_inter
+    pub fn update_bandwidth(&mut self, from: T, to: T, bandwidth: usize) {
+        if let Some((from, to)) = self.map_two(&from, &to) {
+            self.update_bandwidth_inter(from, to, bandwidth);
+        }
+    }
+
+    /// Update the bandwidth of a link represented by the source and destination
+    fn update_bandwidth_inter(&mut self, from: usize, to: usize, bandwidth: usize) {
+        if let Some(link) = self.links[(from, to)].borrow_mut() {
+            link.bandwidth = bandwidth;
+        }
+    }
+
+    /// Get the bandwidth between two nodes. Uses the strategy defined to find the path,
+    /// and then compute the bandwidth between the two nodes along the path.
+    pub fn bandwidth_between(&self, from: T, to: T) -> Option<usize> {
+        if let Some((from, to)) = self.map_two(&from, &to) {
+            let (val, path) = self.path_between(from);
+            // if the strategy is widest path, the "val" contains already the bandwidth between
+            // the nodes. Do not need to compute it again.
+            if let PathStrategy::WidestPath = self.path_strategy {
+                return val[to];
             }
-            attr
-        };
-        println!("graph network_graph {{");
-        for i in 0..self.edges.size() {
-            for j in 0..i {
-                if let Some(edge) = self.edges[(i, j)] {
-                    let name_1 = name_function(i);
-                    let name_2 = name_function(j);
-                    println!("\t{} -- {} [label={}{}];", name_1, name_2, edge.speed, attributes(i, j));
+
+            // check if a link exists
+            if let None = path[to] {
+                return None;
+            }
+
+            let mut dest = to;
+            let mut speed = usize::MAX;
+            while let Some(parent) = path[dest] {
+                speed = min(speed, self.links[(dest, parent)].as_ref().unwrap().bandwidth());
+                dest = parent;
+            }
+            Some(speed)
+        } else {
+            None
+        }
+    }
+
+    /// Update the bandwidth along a path between two nodes by applying the function given in parameter.
+    /// The function "func" is Fn(old_bandwidth) -> new_bandwidth
+    pub fn update_edges_along_path_by(&mut self, from: T, to: T, func: impl Fn(usize) -> usize) {
+        if let Some((from, to)) = self.map_two(&from, &to) {
+            let (_, path) = self.path_between(from);
+            let mut last_child = to;
+            while let Some(parent) = path[last_child] {
+                let edge_speed = self.links[(parent, last_child)].as_ref().unwrap().bandwidth();
+                self.update_bandwidth_inter(parent, last_child, func(edge_speed));
+                last_child = parent;
+            }
+        }
+    }
+
+    /// Get the path between two nodes in the Path structure representation.
+    pub fn get_path_between(&self, from: T, to: T) -> Option<Path<T>> {
+        if let Some((from, to)) = self.map_two(&from, &to) {
+            let (_, parents) = self.path_between(from);
+
+            let mut links = Vec::new();
+            let mut edges_set = HashSet::new();
+
+            let mut last_child = to;
+
+            while let Some(parent) = parents[last_child] {
+                let link = self.links[(parent, last_child)].clone()
+                    .expect("Must be present, or it is not a parent-child relation");
+                links.push(link.clone());
+                let newly_added = edges_set.insert(link);
+                assert!(newly_added);
+                last_child = parent;
+            }
+            links.reverse();
+            Some(Path {
+                links,
+                links_set: edges_set,
+            })
+        } else { None }
+    }
+
+    /// Get the path between a node to the other nodes in the graph regarding the Network strategy.
+    /// In the case of Shortest Path, it applies Dijkstra's algorithm and gives (dist, parents).
+    /// In the case of Widest Path, it gives (bandwidth, parents)
+    fn path_between(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+        match self.path_strategy {
+            PathStrategy::WidestPath => self.widest_path(from),
+            PathStrategy::ShortestPath => self.shortest_path_from(from)
+        }
+    }
+
+    /// Calculate the shortest path to all other nodes, gives back a parents vector.
+    fn shortest_path_from(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+        let mut dist = vec![None; self.links.size()];
+        dist[from] = Some(0);
+
+        let mut parents = vec![None; self.links.size()];
+
+        // Create vertex priority queue
+        let mut to_visit: BinaryHeap<Pair> = BinaryHeap::new();
+
+        // Add the source to the queue
+        to_visit.push(Pair { node: from, val: dist[from].unwrap() });
+
+        while let Some(vert) = to_visit.pop() {
+            // No need to visit if we already found a shortest path to the current_src
+            // Same energy as putting the node as "visited".
+            // If the node has never been visited, it contains "None"
+            // can unwrap safely because if something is in the queue, It MUST have a distance.
+            if vert.val > dist[vert.node].unwrap() {
+                continue;
+            }
+
+            for neigh in self.neighbours(vert.node) {
+                // Add + 1 because the distance is in "hopes"
+                let alt = dist[vert.node].unwrap() + 1;
+                if dist[neigh] == None || alt < dist[neigh].unwrap() {
+                    dist[neigh] = Some(alt);
+                    parents[neigh] = Some(vert.node);
+                    // add the new neighbour to the queue
+                    to_visit.push(Pair { node: neigh, val: dist[neigh].unwrap() });
                 }
             }
         }
-        // print the color of each bridges
-        for i in self.nb_term..self.edges.size() {
-            let name = name_function(i);
-            println!("\t{} [color=\"red\"]", name)
-        }
-        println!("}}")
+        (dist, parents)
     }
 
-    pub fn add_edge(&mut self, from: usize, to: usize, speed: usize) {
-        self.edges[(from, to)] = Some(Edge::build(from, to, speed));
-    }
-
-    pub fn update_speed(&mut self, from: usize, to: usize, speed: usize) {
-        if let Some(edge) = self.edges[(from, to)].borrow_mut() {
-            edge.speed = speed;
-        }
-    }
-
-    pub fn node_speed(&self, node: usize) -> usize {
-        for i in 0..self.edges.size() {
-            if let Some(edge) = self.edges[(node, i)] {
-                return edge.speed;
-            }
-        }
-        0
-    }
-
-
-    pub fn bandwidth_between(&self, from: usize, to: usize) -> usize {
-        let paths = self.parents_from(from, to);
-        // check if a link exists
-        if let None = paths[to] {
-            return 0;
-        }
-
-        let mut dest = to;
-        let mut speed = usize::MAX;
-        while let Some(parent) = paths[dest] {
-            speed = min(speed, self.edges[(dest, parent)].unwrap().speed);
-            dest = parent;
-        }
-        speed
-    }
-
-    pub fn update_edges_along_path_by(&mut self, from: usize, to: usize, func: impl Fn(usize) -> usize) {
-        let path = self.parents_from(from, to);
-        let mut last_child = to;
-        while let Some(parent) = path[last_child] {
-            let edge_speed = self.edges[(parent, last_child)].unwrap().speed;
-            self.update_speed(parent, last_child, func(edge_speed));
-            last_child = parent;
-        }
-    }
-
-    pub fn path_from(&self, from: usize, to: usize) -> Path {
-        let parents = self.parents_from(from, to);
-
-        let mut edges = Vec::new();
-        let mut edges_set = HashSet::new();
-
-        let mut last_child = to;
-
-        while let Some(parent) = parents[last_child] {
-            let edge = self.edges[(parent, last_child)]
-                .expect("Must be present, or it is not a parent-child relation");
-            edges.push(edge);
-            let newly_added = edges_set.insert(edge);
-            assert!(newly_added);
-            last_child = parent;
-        }
-        edges.reverse();
-        Path {
-            edges,
-            edges_set,
-        }
-    }
-
-    fn parents_from(&self, from: usize, to: usize) -> Vec<Option<usize>> {
-        let mut parents: Vec<Option<usize>> = (0..self.edges.size()).map(|_| None).collect();
-        let mut queue: Vec<usize> = Vec::new();
-        let mut visited: HashSet<usize> = HashSet::new();
-
-        visited.insert(from);
-        queue.push(from);
-        while let Some(node) = queue.pop() {
-            if node == to {
-                break;
-            }
-            for neigh in self.neighbours(node) {
-                let neigh = neigh.clone();
-                if visited.insert(neigh) {
-                    parents[neigh] = Some(node);
-                    queue.push(neigh);
-                }
-            }
-        }
-        parents
-    }
-
+    /// Gives the neighbours of a link in term of indexes.
     fn neighbours(&self, from: usize) -> Vec<usize> {
         let mut neighbours = Vec::new();
-        for i in 0..self.edges.size() {
-            if let Some(_) = self.edges[(from, i)] {
+        for i in 0..self.links.size() {
+            if let Some(_) = self.links[(from, i)] {
                 if i != from {
                     neighbours.push(i);
                 }
@@ -279,9 +421,90 @@ impl Network {
         }
         neighbours
     }
+
+
+    /// Calculate the widest path between the "from" node to all the others.
+    /// The widest path is the path containing the most bandwidth.
+    /// returns a vector containing the maximal bandwidth with the other nodes and secondly
+    /// a vector containing the parent chaining to achieve this path.
+    fn widest_path(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+        let mut bandwidths: Vec<_> = (0..self.links.size()).map(|_| None).collect();
+        let mut parents: Vec<Option<usize>> = (0..self.links.size()).map(|_| None).collect();
+        let mut to_visit: BinaryHeap<Pair> = BinaryHeap::new();
+
+        bandwidths[from] = Some(usize::MAX);
+        to_visit.push(Pair {
+            node: from,
+            val: usize::MAX,
+        });
+
+        while let Some(Pair { node: current_src, val: bandwidth }) = to_visit.pop() {
+            // No need to visit if we already found a widest path to the current_src
+            // Same energy as putting the node as "visited".
+            // If the node has never been visited, it contains "None"
+            if let Some(bw) = bandwidths[current_src] {
+                if bandwidth < bw {
+                    continue;
+                }
+            }
+
+            // get its neighbors
+            let neighs = self.neighbours(current_src);
+            for n in neighs {
+                let current_link_bandwidth = self.links[(current_src, n)].as_ref().unwrap().bandwidth();
+
+                let current_bandwidth = if let Some(bw) = bandwidths[n] {
+                    max(bw, min(bandwidths[current_src].unwrap(), current_link_bandwidth))
+                } else {
+                    min(bandwidths[current_src].unwrap(), current_link_bandwidth)
+                };
+
+
+                // Relaxation
+                if bandwidths[n] == None || current_bandwidth > bandwidths[n].unwrap() {
+                    bandwidths[n] = Some(current_bandwidth);
+                    parents[n] = Some(current_src);
+                    to_visit.push(Pair { node: n, val: current_bandwidth as usize })
+                }
+            }
+        }
+        return (bandwidths, parents);
+    }
 }
 
-pub trait RandomRemover {
+/// A Pair represent a node and another value. It is usec by Widest-Path and Shortest-Path algorithm
+/// to be stored inside a priority queue. It implements Ord in a way that using a Pair with BinaryHeap
+/// will produce a Min-Priority-Queue based on the value.
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct Pair {
+    node: usize,
+    val: usize,
+}
+
+// The priority queue depends on `Ord`.
+// Explicitly implement the trait so the queue becomes a min-heap
+// instead of a max-heap.
+impl Ord for Pair {
+    fn cmp(&self, other: &Pair) -> Ordering {
+        // Notice that the we flip the ordering on val.
+        // In case of a tie we compare positions - this step is necessary
+        // to make implementations of `PartialEq` and `Ord` consistent.
+        other.val.cmp(&self.val)
+            .then_with(|| other.node.cmp(&self.node))
+    }
+}
+
+// `PartialOrd` needs to be implemented as well.
+impl PartialOrd for Pair {
+    fn partial_cmp(&self, other: &Pair) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
+/// The trait random remover allow to remove an element from a vector in a random way. Used
+/// to generate random Networks!
+trait RandomRemover {
     type Item;
     fn insert_set(&mut self, item: Self::Item) -> bool;
     fn get_random<R: Rng>(&self, rng: &mut R) -> Option<Self::Item>;

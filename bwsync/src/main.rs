@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
@@ -6,14 +7,17 @@ use std::str::FromStr;
 use bwsync::launch_node;
 use bwsync::Command;
 use bwsync::Flow;
+use netgraph::PathStrategy;
 
 #[tokio::main]
 async fn main() {
     // configuration
     let nb_term = 3;
+    let nb_intern = 2;
+    let vertices = (0..nb_term + nb_intern).map(|i| i).collect();
 
     println!("Creating a graph...");
-    let mut net = netgraph::Network::new(2, nb_term);
+    let mut net = netgraph::Network::new(&vertices, PathStrategy::WidestPath);
     // 0, 1, 2 = terminal nodes and 3, 4 = internal nodes
     // 0 -> 3 100
     // 1 -> 3 50
@@ -31,12 +35,12 @@ async fn main() {
     // (the sender, the bandwidth) when something is received by a node on its channel,
     // it means that a flow has been activated from the sender to him with the bandwidth indicated.
     let mut receivers = Vec::new();
-    let mut senders = Vec::new();
-    for _ in 0..nb_term {
+    let mut senders = HashMap::new();
+    for i in 0..nb_term {
         // create the channel
         let (sender, receiver) = mpsc::channel(100);
         receivers.push(Some(receiver));
-        senders.push(sender);
+        senders.insert(vertices[i], sender);
     }
 
     for i in 0..nb_term {
@@ -93,6 +97,6 @@ async fn main() {
 
         // send the command to the node
         println!("sending command to the node");
-        senders[flow.source].send((command, flow)).await.unwrap();
+        senders.get(&flow.source).unwrap().send((command, flow)).await.unwrap();
     }
 }

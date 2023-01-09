@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 matrix = { path = "../matrix" }
-rand = "0.8.5"
+rand = { workspace = true }
+serde = { workspace = true }

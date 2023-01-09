@@ -4,18 +4,18 @@ use std::ops::{Index, IndexMut};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
-pub struct Matrix<T: Copy> {
+pub struct Matrix<T> {
     n: usize,
     data: Vec<Vec<T>>,
 }
 
-impl<T: Copy> IndexMut<(usize, usize)> for Matrix<T> {
+impl<T: Clone> IndexMut<(usize, usize)> for Matrix<T> {
     fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
         self.data[index.0][index.1].borrow_mut()
     }
 }
 
-impl<T: Copy> Index<(usize, usize)> for Matrix<T> {
+impl<T: Clone> Index<(usize, usize)> for Matrix<T> {
     type Output = T;
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
@@ -24,7 +24,7 @@ impl<T: Copy> Index<(usize, usize)> for Matrix<T> {
 }
 
 
-impl<T: Copy> Matrix<T> {
+impl<T: Clone> Matrix<T> {
     pub fn new_fn<F>(n: usize, f: F) -> Self
         where F: Fn(usize, usize) -> T {
         let data = (0..n)
@@ -48,7 +48,7 @@ impl<T: Copy> Matrix<T> {
                 f(row, col)
             } else {
                 // copy our content to the new matrix
-                self[(row, col)]
+                self[(row, col)].clone()
             }
         })
     }
@@ -56,19 +56,19 @@ impl<T: Copy> Matrix<T> {
 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SymMatrix<T: Copy> {
+pub struct SymMatrix<T> {
     n: usize,
     data: Vec<T>,
 }
 
-impl<T: Copy> IndexMut<(usize, usize)> for SymMatrix<T> {
+impl<T: Clone> IndexMut<(usize, usize)> for SymMatrix<T> {
     fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
         let index_in_vec = SymMatrix::<T>::out_to_in_index(index.0, index.1, self.n);
         self.data[index_in_vec].borrow_mut()
     }
 }
 
-impl<T: Copy> Index<(usize, usize)> for SymMatrix<T> {
+impl<T: Clone> Index<(usize, usize)> for SymMatrix<T> {
     type Output = T;
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
@@ -77,7 +77,7 @@ impl<T: Copy> Index<(usize, usize)> for SymMatrix<T> {
     }
 }
 
-impl<T: Copy> SymMatrix<T> {
+impl<T: Clone> SymMatrix<T> {
     pub fn new_fn<F>(n: usize, mut f: F) -> Self
         where F: FnMut(usize, usize) -> T {
         // The number of element in the vector is given by the arithmetic sequence of reason = n
@@ -170,7 +170,7 @@ impl<T: Copy> SymMatrix<T> {
                 f(row, col)
             } else {
                 // copy our content to the new matrix
-                self[(row, col)]
+                self[(row, col)].clone()
             }
         })
     }
@@ -179,7 +179,7 @@ impl<T: Copy> SymMatrix<T> {
         SymMatrix::new_fn(self.n - 1, |row, col| {
             let row = if row >= id {row + 1} else {row};
             let col = if col >= id {col + 1} else {col};
-            self[(row, col)]
+            self[(row, col)].clone()
         })
     }
 }

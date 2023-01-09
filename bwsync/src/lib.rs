@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use tokio::sync::mpsc;
 
@@ -10,36 +11,48 @@ pub enum Command {
     UPDATE,
 }
 
-#[derive(Debug, Eq, Clone, Copy)]
-pub struct Flow {
-    pub source: usize,
-    pub destination: usize,
+#[derive(Eq, Clone, Copy)]
+pub struct Flow<T: netgraph::Vertex> {
+    pub source: T,
+    pub destination: T,
     bandwidth: usize,
     pub target_bandwidth: usize,
 }
 
-impl PartialEq for Flow {
+impl<T: netgraph::Vertex> PartialEq for Flow<T> {
     fn eq(&self, other: &Self) -> bool {
         self.source == other.source && self.destination == other.destination
     }
 }
 
-impl Hash for Flow {
+impl<T: netgraph::Vertex> Hash for Flow<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (self.source, self.destination).hash(state)
     }
 }
 
-impl Flow {
-    pub fn build(source: usize, destination: usize, bandwidth: usize, target_bandwidth: usize) -> Flow {
+impl<T: netgraph::Vertex> Display for Flow<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.bandwidth, self.target_bandwidth)
+    }
+}
+
+impl<T: netgraph::Vertex> Debug for Flow<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self, f)
+    }
+}
+
+impl<T: netgraph::Vertex> Flow<T> {
+    pub fn build(source: T, destination: T, bandwidth: usize, target_bandwidth: usize) -> Flow<T> {
         Flow { source, destination, bandwidth, target_bandwidth }
     }
 }
 
-pub async fn launch_node(graph: netgraph::Network, node_list: Vec<mpsc::Sender<(Command, Flow)>>, mut receiver: mpsc::Receiver<(Command, Flow)>, id: usize) {
+pub async fn launch_node<T: netgraph::Vertex>(graph: netgraph::Network<T>, node_list: HashMap<T, mpsc::Sender<(Command, Flow<T>)>>, mut receiver: mpsc::Receiver<(Command, Flow<T>)>, id: T) {
     // Used to store the active flows.
     // Node_id (destination) : Bandwidth
-    let mut active_flows: HashSet<Flow> = HashSet::new();
+    let mut active_flows: HashSet<Flow<T>> = HashSet::new();
 
     // Used to store the available bandwidth on the graph
     let mut bw_graph = graph.clone();
@@ -92,34 +105,38 @@ pub async fn launch_node(graph: netgraph::Network, node_list: Vec<mpsc::Sender<(
     }
 }
 
-fn update_flow(mut active_flows: HashSet<Flow>, flow: Flow, graph: &netgraph::Network, mut bw_graph: netgraph::Network) -> (HashSet<Flow>, netgraph::Network){
+fn update_flow<T: netgraph::Vertex>(mut active_flows: HashSet<Flow<T>>, flow: Flow<T>, graph: &netgraph::Network<T>, mut bw_graph: netgraph::Network<T>) -> (HashSet<Flow<T>>, netgraph::Network<T>) {
     // This is the new flow to add/update. This variable will contain at then end
     // of the branch bellow the value to report to the other. Updated in each branches (if/else).
     // If there is enough bandwidth remaining, create the flow and send it to the others
 
-    // If there is enough bandwidth remaining, create the flow and send it to the others
-    if bw_graph.bandwidth_between(flow.source, flow.destination) >= flow.target_bandwidth {
-        bw_graph.update_edges_along_path_by(flow.source, flow.destination, |old_speed| old_speed - flow.target_bandwidth);
-        // Add the new flow inside the active flow.
-        active_flows.insert(flow);
-    } else {
-        // new_flows contains now all active flows impacted by the update/creation of the flow
-        // with their new values. It also contain the updated/created flow with its values.
-        let new_flows = update_active_flows(flow, active_flows.clone(), &graph);
+    if let Some(bandwidth_between) = bw_graph.bandwidth_between(flow.source, flow.destination) {
+        // If there is enough bandwidth remaining, create the flow and send it to the others
+        if bandwidth_between >= flow.target_bandwidth {
+            bw_graph.update_edges_along_path_by(flow.source, flow.destination, |old_speed| old_speed - flow.target_bandwidth);
+            // Add the new flow inside the active flow.
+            active_flows.insert(flow);
+        } else {
+            // new_flows contains now all active flows impacted by the update/creation of the flow
+            // with their new values. It also contain the updated/created flow with its values.
+            let new_flows = update_active_flows(flow, active_flows.clone(), &graph);
 
-        // we must replace the old values of the flows inside our "active flows set"
-        for fl in new_flows {
-            active_flows.replace(fl);
+            // we must replace the old values of the flows inside our "active flows set"
+            for fl in new_flows {
+                active_flows.replace(fl);
+            }
+
+            // we must now adapt the bandwidth graph with the new flows, we better have
+            // to recalculate everything
+            bw_graph = calculate_bandwidth_graph(&graph, &active_flows);
         }
-
-        // we must now adapt the bandwidth graph with the new flows, we better have
-        // to recalculate everything
-        bw_graph = calculate_bandwidth_graph(&graph, &active_flows);
+    } else {
+        eprintln!("[UPDATE_FLOW]: There is no path between {} and {}", flow.source, flow.destination)
     }
     (active_flows, bw_graph)
 }
 
-fn remove_flow(mut active_flows: HashSet<Flow>, flow: Flow, graph: &netgraph::Network) -> (HashSet<Flow>, netgraph::Network) {
+fn remove_flow<T: netgraph::Vertex>(mut active_flows: HashSet<Flow<T>>, flow: Flow<T>, graph: &netgraph::Network<T>) -> (HashSet<Flow<T>>, netgraph::Network<T>) {
     // remove the flow from the active flows
     active_flows.remove(&flow);
     let new_flows = update_active_flows(flow, active_flows.clone(), &graph);
@@ -133,15 +150,15 @@ fn remove_flow(mut active_flows: HashSet<Flow>, flow: Flow, graph: &netgraph::Ne
     (active_flows, bw_graph)
 }
 
-async fn broadcast_flow(node_list: &Vec<mpsc::Sender<(Command, Flow)>>, flow: Flow, id: usize) {
-    for i in 0..node_list.len() {
-        if i == id { continue; } // do not update myself
-        node_list[i].send((Command::UPDATE, flow)).await.unwrap()
+async fn broadcast_flow<T: netgraph::Vertex>(node_list: &HashMap<T, mpsc::Sender<(Command, Flow<T>)>>, flow: Flow<T>, id: T) {
+    for (i, sender) in node_list {
+        if id.eq(i) { continue; } // do not update myself
+        sender.send((Command::UPDATE, flow)).await.unwrap()
     }
 }
 
 
-fn calculate_bandwidth_graph(graph: &netgraph::Network, active_flows: &HashSet<Flow>) -> netgraph::Network {
+fn calculate_bandwidth_graph<T: netgraph::Vertex>(graph: &netgraph::Network<T>, active_flows: &HashSet<Flow<T>>) -> netgraph::Network<T> {
     let mut bw_graph = graph.clone();
     for flow in active_flows {
         bw_graph.update_edges_along_path_by(flow.source, flow.destination, |old_speed| old_speed - flow.bandwidth);
@@ -149,7 +166,7 @@ fn calculate_bandwidth_graph(graph: &netgraph::Network, active_flows: &HashSet<F
     bw_graph
 }
 
-fn update_active_flows(flow_updated: Flow, active_flows: HashSet<Flow>, original_graph: &netgraph::Network) -> HashSet<Flow> {
+fn update_active_flows<T: netgraph::Vertex>(flow_updated: Flow<T>, active_flows: HashSet<Flow<T>>, original_graph: &netgraph::Network<T>) -> HashSet<Flow<T>> {
     // If there is not enough bandwidth, find all active flows that share a same link
     // and calculate my share. Then create the flow and update the other guys
     // which will calculate their share.
@@ -174,12 +191,12 @@ fn update_active_flows(flow_updated: Flow, active_flows: HashSet<Flow>, original
     distribute_bandwidth_across_flow(shared_links, impacted_flows)
 }
 
-fn get_shared_links_and_impacted_flows(flow_updated: Flow, all_flows: HashSet<Flow>, graph: &netgraph::Network) -> (HashSet<netgraph::Edge>, HashSet<Flow>) {
-    let flow_path = graph.path_from(flow_updated.source, flow_updated.destination);
+fn get_shared_links_and_impacted_flows<T: netgraph::Vertex>(flow_updated: Flow<T>, all_flows: HashSet<Flow<T>>, graph: &netgraph::Network<T>) -> (HashSet<netgraph::Link<T>>, HashSet<Flow<T>>) {
+    let flow_path = graph.get_path_between(flow_updated.source, flow_updated.destination).unwrap();
     // Get the links that are shared by the flows and the flows that share links with the new flow
     all_flows.iter()
         .filter_map(|f| {
-            let path = graph.path_from(f.source, f.destination);
+            let path = graph.get_path_between(f.source, f.destination).unwrap();
             let shared = flow_path.shared_edges(&path);
             if shared.is_empty() {
                 None
@@ -208,11 +225,11 @@ fn get_shared_links_and_impacted_flows(flow_updated: Flow, all_flows: HashSet<Fl
     )
 }
 
-fn distribute_bandwidth_across_flow(shared_links: HashSet<netgraph::Edge>, mut flows: HashSet<Flow>) -> HashSet<Flow> {
+fn distribute_bandwidth_across_flow<T: netgraph::Vertex>(shared_links: HashSet<netgraph::Link<T>>, mut flows: HashSet<Flow<T>>) -> HashSet<Flow<T>> {
     // The calculation is based on the slowest link and the flows that need to go through.
 
     // Find the link with the minimum bandwidth
-    let available_bandwidth = shared_links.iter().map(|e| e.speed).min().unwrap();
+    let available_bandwidth = shared_links.iter().map(|e| e.bandwidth).min().unwrap();
     // Calculate simple partitioning: everyone has the same.
     let initial_partition = available_bandwidth as f64 / flows.len() as f64;
 
@@ -225,7 +242,7 @@ fn distribute_bandwidth_across_flow(shared_links: HashSet<netgraph::Edge>, mut f
     let mut actual_partition = initial_partition;
 
     loop {
-        let maxed_out_flows: HashSet<Flow> = flows.iter()
+        let maxed_out_flows: HashSet<Flow<T>> = flows.iter()
             .filter(|f| (f.target_bandwidth as f64) < actual_partition)
             .map(|f| f.clone())
             .collect();
