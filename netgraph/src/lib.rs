@@ -1,4 +1,5 @@
 use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::cmp::{max, min, Ordering};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt::Display;
@@ -143,12 +144,24 @@ pub enum PathStrategy {
     ShortestPath,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
+/// Network represents a network with its nodes and inter-connection.
+/// This structure offers multiple method and path strategy that helps working with the network.
+/// Be aware that this structure manage caches for path finding and because of this, it is not safe
+/// to make concurrent requests on a same instance. You need to protect it with a mutex.
 pub struct Network<T: Eq + Hash> {
     links: SymMatrix<Option<Link<T>>>,
     mapper: HashMap<T, usize>,
     path_strategy: PathStrategy,
+    #[serde(skip, default = "default_cache")]
+    shortest_path_cache: RefCell<HashMap<usize, (Vec<Option<usize>>, Vec<Option<usize>>)>>,
+    #[serde(skip, default = "default_cache")]
+    widest_path_cache: RefCell<HashMap<usize, (Vec<Option<usize>>, Vec<Option<usize>>)>>,
+}
+
+/// Functions for deserialization
+fn default_cache() -> RefCell<HashMap<usize, (Vec<Option<usize>>, Vec<Option<usize>>)>> {
+    RefCell::new(HashMap::new())
 }
 
 impl<T: Vertex> Clone for Network<T> {
@@ -157,11 +170,12 @@ impl<T: Vertex> Clone for Network<T> {
             links: self.links.clone(),
             mapper: self.mapper.clone(),
             path_strategy: self.path_strategy.clone(),
+            shortest_path_cache: RefCell::new(self.shortest_path_cache.borrow().clone()),
+            widest_path_cache: RefCell::new(self.widest_path_cache.borrow().clone()),
         }
     }
 }
 
-#[allow(dead_code)]
 impl<T: Vertex> Network<T> {
     pub fn new(vertices: &Vec<T>, path_strategy: PathStrategy) -> Network<T> {
         Network {
@@ -172,9 +186,12 @@ impl<T: Vertex> Network<T> {
                     acc
                 }),
             path_strategy,
+            shortest_path_cache: RefCell::new(HashMap::new()),
+            widest_path_cache: RefCell::new(HashMap::new()),
         }
     }
 
+    #[allow(dead_code)]
     pub fn generate_random_network(nb_inter: usize, nb_term: usize, diff_speeds: usize, path_strategy: PathStrategy) -> Network<usize> {
         // create random generator
         let mut rng = rand::thread_rng();
@@ -278,6 +295,8 @@ impl<T: Vertex> Network<T> {
     pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: usize) {
         if let Some((from_inter, to_inter)) = self.map_two(from, to) {
             self.links[(from_inter, to_inter)] = Some(Link::build(from.clone(), to.clone(), from_inter, to_inter, bandwidth));
+            // invalidate shortest / widest paths cache!
+            self.clear_path_caches();
         }
     }
 
@@ -292,7 +311,13 @@ impl<T: Vertex> Network<T> {
     fn update_bandwidth_inter(&mut self, from: usize, to: usize, bandwidth: usize) {
         if let Some(link) = self.links[(from, to)].borrow_mut() {
             link.bandwidth = bandwidth;
+            self.clear_path_caches();
         }
+    }
+
+    fn clear_path_caches(&self) {
+        self.widest_path_cache.borrow_mut().clear();
+        self.shortest_path_cache.borrow_mut().clear();
     }
 
     /// Get the bandwidth between two nodes. Uses the strategy defined to find the path,
@@ -368,13 +393,29 @@ impl<T: Vertex> Network<T> {
     /// In the case of Widest Path, it gives (bandwidth, parents)
     fn path_between(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
         match self.path_strategy {
-            PathStrategy::WidestPath => self.widest_path(from),
-            PathStrategy::ShortestPath => self.shortest_path_from(from)
+            PathStrategy::WidestPath => {
+                if let Some(widest_path) = self.widest_path_cache.borrow().get(&from) {
+                    widest_path.clone()
+                } else {
+                    let widest_path = self.widest_path(from);
+                    self.widest_path_cache.borrow_mut().insert(from, widest_path.clone());
+                    widest_path
+                }
+            }
+            PathStrategy::ShortestPath => {
+                if let Some(shortest_path) = self.shortest_path_cache.borrow().get(&from) {
+                    shortest_path.clone()
+                } else {
+                    let shortest_path = self.shortest_path(from);
+                    self.shortest_path_cache.borrow_mut().insert(from, shortest_path.clone());
+                    shortest_path
+                }
+            }
         }
     }
 
     /// Calculate the shortest path to all other nodes, gives back a parents vector.
-    fn shortest_path_from(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+    fn shortest_path(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
         let mut dist = vec![None; self.links.size()];
         dist[from] = Some(0);
 
