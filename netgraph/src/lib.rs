@@ -192,12 +192,15 @@ impl<T: Vertex> Network<T> {
     }
 
     #[allow(dead_code)]
-    pub fn generate_random_network(nb_inter: usize, nb_term: usize, diff_speeds: usize, path_strategy: PathStrategy) -> Network<usize> {
+    pub fn generate_random_network(nb_inter: usize, nb_term: usize, diff_speeds: usize, path_strategy: PathStrategy) -> (Network<usize>, Vec<usize>) {
         // create random generator
         let mut rng = rand::thread_rng();
         // create the network
         let vertices = (0..nb_term + nb_inter).collect();
         let mut net = Network::new(&vertices, path_strategy);
+
+        // vector to collect the speed generated for each terminal nodes
+        let mut speeds = vec![0; nb_term];
 
         // creating internal nodes
         let mut visited_nodes: Vec<usize> = Vec::new();
@@ -230,14 +233,16 @@ impl<T: Vertex> Network<T> {
             let to_place = min(rng.gen_range(0..3) + 1, remaining_terminal);
 
             for i in 0..to_place {
+                let current_node = nb_term - remaining_terminal + i;
                 // generate an edge speed
                 let edge_speed = rng.gen_range(0..diff_speeds);
-                net.add_edge(&v, &(nb_term - remaining_terminal + i), edge_speed);
+                speeds[current_node] = edge_speed;
+                net.add_edge(&v, &current_node, edge_speed);
             }
             remaining_terminal -= to_place;
         }
 
-        net
+        (net, speeds)
     }
 
     /// This method print the graph in latex format using tikzpicture.
@@ -394,20 +399,22 @@ impl<T: Vertex> Network<T> {
     fn path_between(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
         match self.path_strategy {
             PathStrategy::WidestPath => {
-                if let Some(widest_path) = self.widest_path_cache.borrow().get(&from) {
+                let mut cache = self.widest_path_cache.borrow_mut();
+                if let Some(widest_path) = cache.get(&from) {
                     widest_path.clone()
                 } else {
                     let widest_path = self.widest_path(from);
-                    self.widest_path_cache.borrow_mut().insert(from, widest_path.clone());
+                    cache.insert(from, widest_path.clone());
                     widest_path
                 }
             }
             PathStrategy::ShortestPath => {
-                if let Some(shortest_path) = self.shortest_path_cache.borrow().get(&from) {
+                let mut cache =  self.shortest_path_cache.borrow_mut();
+                if let Some(shortest_path) = cache.get(&from) {
                     shortest_path.clone()
                 } else {
                     let shortest_path = self.shortest_path(from);
-                    self.shortest_path_cache.borrow_mut().insert(from, shortest_path.clone());
+                    cache.insert(from, shortest_path.clone());
                     shortest_path
                 }
             }

@@ -59,21 +59,21 @@ fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: us
     };
 
     // First, generate a random graph
-    let net = Network::generate_random_network(nb_inter, nb_ter, diff_speed);
+    let (net, speeds) = Network::<usize>::generate_random_network(nb_inter, nb_ter, diff_speed, netgraph::PathStrategy::ShortestPath);
 
     // create a CGraph
     let mut cgraph = CGraph::<usize>::new();
 
-    let leader_speed = net.node_speed(0);
+    let leader_speed = speeds[0];
 
     cgraph.add_node(leader_speed, 0).expect("Cannot add node");
     // Add one by one the other nodes
     for i in 1..nb_ter {
         // Add the node
-        let edge_speed = net.node_speed(i);
+        let edge_speed = speeds[i];
         let me = cgraph.add_node(edge_speed, i).expect("cannot add node");
         while let Some(other) = cgraph.find_missing_from_me(me, sufficient) {
-            let speed = net.bandwidth_between(i, other.info());
+            let speed = net.bandwidth_between(&i, &other.info()).unwrap();
             result.nb_tests += 1;
             let useful = cgraph.add_link_direct_test(me, other, speed).expect("cannot add link");
             if useful { result.nb_useful += 1; }
@@ -84,7 +84,7 @@ fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: us
     for i in 0..speeds_matrix.size() {
         for j in 0..speeds_matrix.size() {
             if i == j { continue; }
-            if speeds_matrix[(i, j)] != net.bandwidth_between(i, j) {
+            if speeds_matrix[(i, j)] != net.bandwidth_between(&i, &j).unwrap() {
                 result.error_count += 1
             }
         }

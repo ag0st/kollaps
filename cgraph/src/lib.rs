@@ -1,9 +1,8 @@
-use io::Result;
 use std::cmp::min;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::io::{Error, ErrorKind};
+use common::{Error, ErrorKind, ErrorProducer, Result};
 
 use serde::{Deserialize, Serialize};
 
@@ -77,7 +76,6 @@ pub struct CGraph<I: Clone + Eq> {
 }
 
 
-
 impl<I: Clone + Eq> CGraph<I> {
     pub fn new() -> CGraph<I> {
         CGraph {
@@ -101,7 +99,7 @@ impl<I: Clone + Eq> CGraph<I> {
     pub fn find_leader(&self) -> Result<Node<I>> {
         // find the best average speed against all others
         if self.nodes.len() == 0 {
-            return Err(Error::new(ErrorKind::Other, String::from("No element in the graph, no leader")));
+            return Err(Self::err_producer().create(ErrorKind::EmptyGraph, "No element in the graph, no leader"));
         }
         let mut best_index = 0;
         let mut best_average: f64 = 0.0;
@@ -144,9 +142,9 @@ impl<I: Clone + Eq> CGraph<I> {
         // Create the node
         let node = Node::build(index, speed, info);
         if !self.nodes.insert(node.clone()) {
-            Err(Error::new(
+            Err(Self::err_producer().create(
                 ErrorKind::AlreadyExists,
-                String::from("node already exists, big problem..."))
+                "node already exists, big problem...")
             )
         } else {
             Ok(node)
@@ -160,9 +158,8 @@ impl<I: Clone + Eq> CGraph<I> {
             .last().expect("cannot find the node you want to remove, predicates returned nothing")
             .clone(); // clone to remove the immutable borrow of the set
         if !self.nodes.remove(&node) {
-            let err = Error::new(
-                ErrorKind::NotFound,
-                String::from("cannot find the node you want to remove"));
+            let err = Self::err_producer().create(
+                ErrorKind::NotFound, "cannot find the node you want to remove");
             return Err(err);
         }
         let cgraph = self.c_graph.remove_id(node.index);
@@ -176,7 +173,7 @@ impl<I: Clone + Eq> CGraph<I> {
         }).collect::<HashSet<Node<I>>>();
 
         if cgraph.size() != new_nodes.len() {
-            Err(Error::new(ErrorKind::Other, "Inconsistency after removing node from CGraph"))
+            Err(Self::err_producer().create(ErrorKind::InconsistentState, "Inconsistency after removing node from CGraph"))
         } else {
             self.c_graph = cgraph;
             self.nodes = new_nodes;
@@ -189,8 +186,8 @@ impl<I: Clone + Eq> CGraph<I> {
         // check that both nodes are in the graph
         if !self.nodes.contains(&from) || !self.nodes.contains(&to) {
             return Err(
-                Error::new(ErrorKind::Other,
-                               String::from("your node is not in the system, add it first"),
+                Self::err_producer().create(ErrorKind::NotFound,
+                                            "your node is not in the system, add it first",
                 )
             );
         }
@@ -202,9 +199,9 @@ impl<I: Clone + Eq> CGraph<I> {
         // Check that the speed given is good
         if speed > min_speed {
             return Err(
-                Error::new(
+                Self::err_producer().create(
                     ErrorKind::InvalidData,
-                    String::from("cannot have better performance than nodes speeds"),
+                    "cannot have better performance than nodes speeds",
                 )
             );
         }
@@ -312,6 +309,10 @@ impl<I: Clone + Eq> CGraph<I> {
         }
     }
 
+
+    fn err_producer() -> ErrorProducer {
+        Error::producer("cgraph")
+    }
 
     fn set_not_limited(&mut self, from_index: usize, to_index: usize) {
         self.c_graph[(from_index, to_index)].set_limited(false);

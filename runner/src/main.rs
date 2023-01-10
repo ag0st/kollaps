@@ -6,7 +6,7 @@ use clap::Parser;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let needed_software = vec!["docker", "iperf3"];
+    let needed_software = vec!["docker", "iperf3", "ip"];
     check_software_dependency(needed_software)?;
     let config = Config::parse();
     cmanager::run(config).await

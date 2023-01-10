@@ -19,6 +19,10 @@ pub enum ErrorKind {
     BadMode,
     NoStream,
     UnexpectedEof,
+    EmptyGraph,
+    AlreadyExists,
+    InconsistentState,
+    InvalidData,
     /// Must not be used, special case when implement From trait from other error to this one.
     /// It will simply encapsulate the error.
     Wrapped,
@@ -39,7 +43,11 @@ impl Display for ErrorKind {
             ErrorKind::ConnectionInterrupted => "Connection Interrupted",
             ErrorKind::BadMode => "Bad Mode",
             ErrorKind::NoStream => "No Stream",
-            ErrorKind::UnexpectedEof => "Unexpected EOF"
+            ErrorKind::UnexpectedEof => "Unexpected EOF",
+            ErrorKind::EmptyGraph => "Empty Graph",
+            ErrorKind::AlreadyExists => "Already Exists",
+            ErrorKind::InconsistentState => "Inconsistent State",
+            ErrorKind::InvalidData => "Invalid Data"
         };
         write!(f, "{message}")
     }
