@@ -16,6 +16,13 @@ pub struct Config {
     /// Can be used as limiter.
     /// The speed must be smaller than the Auto-Negotiated speed for the current connection.
     pub local_speed: usize,
+    #[clap(default_value_t=String::new(), long)]
+    /// MANDATORY IF LEADER. IP range that can be used for the different container in the subnet. In
+    /// CIDR format. For example: 192.168.1.200/28 = [200..215]
+    pub ip_range: String,
+    #[clap(long)]
+    /// Network interface to use for transmission
+    pub interface: String,
     #[clap(default_value_t=usize::MAX, long)]
     /// The sufficient speed needed across the cluster. Take effect only if this node
     /// is the leader.
@@ -63,4 +70,6 @@ pub struct Config {
     /// there is already a node adding itself,
     /// we send a Waiting time to retry to the second request.
     pub cjq_waiting_time_seconds: u64,
+    /// This is the path of the netmod executable to use.
+    pub netmod_exec_path: String,
 }

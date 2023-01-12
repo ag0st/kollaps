@@ -1,0 +1,1 @@
+sudo nsenter -t $(docker inspect -f '{{.State.Pid}}' $1) -n ../target/release/netmod

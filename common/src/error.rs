@@ -23,6 +23,7 @@ pub enum ErrorKind {
     AlreadyExists,
     InconsistentState,
     InvalidData,
+    DockerInit,
     /// Must not be used, special case when implement From trait from other error to this one.
     /// It will simply encapsulate the error.
     Wrapped,
@@ -47,7 +48,8 @@ impl Display for ErrorKind {
             ErrorKind::EmptyGraph => "Empty Graph",
             ErrorKind::AlreadyExists => "Already Exists",
             ErrorKind::InconsistentState => "Inconsistent State",
-            ErrorKind::InvalidData => "Invalid Data"
+            ErrorKind::InvalidData => "Invalid Data",
+            ErrorKind::DockerInit => "Docker Initialization"
         };
         write!(f, "{message}")
     }

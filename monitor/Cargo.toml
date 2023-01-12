@@ -1,0 +1,27 @@
+[package]
+name = "monitor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+memoffset = { workspace = true }
+redbpf = { workspace = true }
+redbpf-macros = { workspace = true }
+redbpf-probes = { workspace = true }
+
+[build-dependencies]
+cargo-bpf = { version = "2.3.0", default-features = false }
+
+[features]
+default = []
+probes = []
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "usage"
+path = "src/usage/main.rs"
+required-features = ["probes"]

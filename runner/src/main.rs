@@ -1,19 +1,31 @@
 use std::{env, fs};
+use std::path::Path;
 
-use common::{Config, Error, ErrorKind};
+use common::{Config, Error, ErrorKind, Result};
 use cmanager;
 use clap::Parser;
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
-    let needed_software = vec!["docker", "iperf3", "ip"];
+async fn main() -> Result<()> {
+    // Check dependencies at runtime
+    let needed_software = vec!["docker", "iperf3", "ip", "sudo", "nsenter"];
     check_software_dependency(needed_software)?;
-    let config = Config::parse();
+    // Get the netmod executable
+    let netmod = check_netmod_executable()?;
+
+    // Parse the config and insert the netmod executable path in it
+    let mut config = Config::parse();
+    config.netmod_exec_path = netmod;
+
+    // remove mutability
+    let config = config;
+
+    // Launch applications
     cmanager::run(config).await
 }
 
 
-fn check_software_dependency(software: Vec<&str>) -> Result<(), Error> {
+fn check_software_dependency(software: Vec<&str>) -> Result<()> {
     for cmd in software {
         let mut found = false;
         if let Ok(path) = env::var("PATH") {
@@ -30,4 +42,14 @@ fn check_software_dependency(software: Vec<&str>) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+fn check_netmod_executable() -> Result<String> {
+    let paths = vec!["./target/release/netmod", "./target/debug/netmod"];
+    for pa in paths {
+        if Path::new(pa).exists() {
+            return Ok(pa.to_string());
+        }
+    }
+    Err(Error::new("program check", ErrorKind::NotFound, "Cannot find the netmod executable"))
 }
