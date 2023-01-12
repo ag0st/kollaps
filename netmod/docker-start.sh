@@ -1,1 +1,0 @@
-docker run --rm -it --name $1 ubuntu:22.04 /bin/bash

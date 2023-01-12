@@ -11,9 +11,6 @@ members = [
     "dockhelper",
     "emulation"
 ]
-exclude = [
-    "netmod"
-]
 
 
 [workspace.dependencies]

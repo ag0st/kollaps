@@ -8,6 +8,4 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 nethelper = { path = "../nethelper" }
-# Depends on NetMod because we need to have the binary made
-netmod = { path = "../netmod" }
 tokio = { workspace = true }
