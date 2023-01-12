@@ -1,5 +1,7 @@
-cd ../monitor || return
+cd monitor || return
 cargo bpf build --target-dir=../target
-cd ../netmod || return
-rm src/usage.elf
-cp ../target/bpf/programs/usage/usage.elf src/usage.elf
+cd .. || return
+if test -f "src/usage.elf"; then
+  rm src/usage.elf
+fi
+cp target/bpf/programs/usage/usage.elf src/usage.elf

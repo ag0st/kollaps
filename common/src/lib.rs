@@ -1,6 +1,7 @@
 mod config;
 mod error;
 mod subnet;
+mod monitor;
 
 // re-exporting the config object
 pub use config::Config;
@@ -12,3 +13,4 @@ pub use error::Result;
 pub use error::ErrorProducer;
 pub use subnet::Subnet;
 pub use subnet::IpMask;
+pub use monitor::{SocketAddr, message};

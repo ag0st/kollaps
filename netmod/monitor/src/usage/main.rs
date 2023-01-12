@@ -22,15 +22,15 @@ use memoffset::offset_of;
 use redbpf_macros::program;
 use redbpf_probes::socket_filter::prelude::*;
 
-use monitor::usage::{SocketAddr, message};
+use monitor::usage::{SocketAddr, Message};
 
 //map to hold perf_events
 #[map(link_section = "maps")]
-static mut perf_events: PerfMap<message> = PerfMap::with_max_entries(512);
+static mut perf_events: PerfMap<Message> = PerfMap::with_max_entries(512);
 
 //map to hold the bytes sent
 #[map(link_section = "maps")]
-static mut usage: HashMap<u32, u32> = HashMap::with_max_entries(4096);
+static mut usage: HashMap<u32, u64> = HashMap::with_max_entries(4096);
 
 //map to hold time that has passed
 #[map(link_section = "maps")]
@@ -72,29 +72,27 @@ fn measure_tcp_lifetime(skb: SkBuff) -> SkBuffResult {
     //We send new values every 25 milli seconds for a given ip, via perf_events
     unsafe {
         //retrieve size of packet
-        let len: u32 = (*skb.skb).len;
-        let currenttime = bpf_ktime_get_ns();
+        let len: u64 = (*skb.skb).len as u64;
+        let current_time = bpf_ktime_get_ns();
         match time.get(&dst.addr) {
             None => {
-                time.set(&dst.addr, &currenttime);
+                time.set(&dst.addr, &current_time);
             }
-            Some(oldtime) => {
-                if currenttime - oldtime > 25000000 {
-                    match usage.get(&dst.addr) {
-                        None => usage.set(&dst.addr, &len),
-                        Some(value) => {
-                            let newvalue = value + len;
-                            usage.set(&dst.addr, &newvalue);
-                            perf_events.insert(skb.skb as *mut __sk_buff, &message { dst: dst.addr, bytes: newvalue });
-                            time.set(&dst.addr, &currenttime);
-                        }
-                    }
-                } else {
-                    match usage.get(&dst.addr) {
-                        None => usage.set(&dst.addr, &len),
-                        Some(value) => {
-                            let newvalue = value + len;
-                            usage.set(&dst.addr, &newvalue);
+            Some(old_time) => {
+                match usage.get(&dst.addr) {
+                    None => usage.set(&dst.addr, &len),
+                    Some(value) => {
+                        let new_value = value + len;
+                        usage.set(&dst.addr, &new_value);
+                        let delta_time_ns = current_time - old_time;
+                        if delta_time_ns > 25_000_000 {
+                            // calculate the throughput Bytes/seconds
+                            let delta_time_seconds = delta_time_ns / 1_000_000_000;
+                            let throughput = value * 8 / (delta_time_seconds * 1000 * 1000);
+                            perf_events.insert(skb.skb as *mut __sk_buff, &Message { dst: dst.addr, throughput: throughput as u32});
+                            // // reset usage and time
+                            usage.set(&dst.addr, &0);
+                            time.set(&dst.addr, &current_time);
                         }
                     }
                 }

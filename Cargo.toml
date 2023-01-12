@@ -1,17 +1,18 @@
 [workspace]
 members = [
-	"runner",
-	"cmanager",
-	"nethelper",
-	"cgraph",
-	"common",
-	"matrix",
-	"netgraph",
-	"bwsync",
-	"dockhelper",
-	"monitor",
-	"netmod",
-	"emulation"
+    "runner",
+    "cmanager",
+    "nethelper",
+    "cgraph",
+    "common",
+    "matrix",
+    "netgraph",
+    "bwsync",
+    "dockhelper",
+    "emulation"
+]
+exclude = [
+    "netmod"
 ]
 
 
