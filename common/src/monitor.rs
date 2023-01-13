@@ -21,8 +21,8 @@ impl fmt::Display for SocketAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Transmut is too much unsafe! It depends on the endianness of the machine
         // use native endianness
-        let octets = self.addr.to_ne_bytes();
-        write!(f, "{:^3}.{:^3}.{:^3}.{:^3}", octets[3], octets[2], octets[1], octets[0])
+        let octets = self.addr.to_be_bytes();
+        write!(f, "{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3])
     }
 }
 
@@ -39,7 +39,7 @@ impl From<&str> for SocketAddr {
         bytes[3] = v[3];
 
         // use native endianness
-        let addr = u32::from_ne_bytes(bytes);
+        let addr = u32::from_be_bytes(bytes);
         SocketAddr { addr }
     }
 }
@@ -51,7 +51,7 @@ impl SocketAddr {
         }
     }
     pub fn to_ip_addr(&self) -> IpAddr {
-        let octets = self.addr.to_ne_bytes();
+        let octets = self.addr.to_be_bytes();
         IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
     }
 }
@@ -65,3 +65,19 @@ impl Deref for SocketAddr {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::net::IpAddr;
+    use std::str::FromStr;
+    use crate::SocketAddr;
+
+    #[test]
+    fn conversions() {
+        let addr = "192.168.1.200";
+        let val = SocketAddr::from(addr);
+        assert_eq!(val.addr, 0b11000000_10101000_00000001_11001000);
+        assert_eq!(val.to_string(), addr);
+        assert_eq!(IpAddr::from_str(addr).unwrap(), val.to_ip_addr())
+
+    }
+}
