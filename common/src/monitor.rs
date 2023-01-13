@@ -1,11 +1,12 @@
+
 use ::core::fmt;
 use ::core::mem::transmute;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct message {
+pub struct Message {
     pub dst: u32,
-    pub bytes: u64,
+    pub throughput: u32,
 }
 
 #[repr(C)]
@@ -32,3 +33,4 @@ impl SocketAddr {
         }
     }
 }
+

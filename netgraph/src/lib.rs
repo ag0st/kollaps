@@ -17,14 +17,14 @@ impl<T: Eq + Hash + Clone + Display + Serialize + for<'a> Deserialize<'a>> Verte
 
 #[derive(Clone)]
 pub struct Path<T: Vertex> {
-    links: Vec<Link<T>>,
+    _links: Vec<Link<T>>,
     links_set: HashSet<Link<T>>,
 }
 
 impl<T: Vertex> Path<T> {
     pub fn new() -> Path<T> {
         Path {
-            links: Vec::new(),
+            _links: Vec::new(),
             links_set: HashSet::new(),
         }
     }
@@ -387,7 +387,7 @@ impl<T: Vertex> Network<T> {
             }
             links.reverse();
             Some(Path {
-                links,
+                _links: links,
                 links_set: edges_set,
             })
         } else { None }
