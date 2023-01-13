@@ -21,11 +21,8 @@ impl fmt::Display for SocketAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Transmut is too much unsafe! It depends on the endianness of the machine
         let mut octets = [0u8; 4];
-        octets[3] = (self.addr >> 24) as u8;
-        octets[2] = (self.addr >> 16) as u8;
-        octets[1] = (self.addr >> 8) as u8;
-        octets[0] = (self.addr >> 0) as u8;
-
+        // use native endianness
+        let octets = self.addr.to_ne_bytes();
         write!(f, "{:^3}.{:^3}.{:^3}.{:^3}", octets[3], octets[2], octets[1], octets[0])
     }
 }
@@ -36,11 +33,14 @@ impl From<&str> for SocketAddr {
         if v.len() != 4 {
             panic!("malformed ip");
         }
-        let mut addr: u32 = 0;
-        addr = addr | ((v[3] as u32) << 24);
-        addr = addr | ((v[2] as u32) << 16);
-        addr = addr | ((v[1] as u32) << 8);
-        addr = addr | ((v[0] as u32) << 0);
+        let mut bytes = [0u8; 4];
+        bytes[0] = v[0];
+        bytes[1] = v[1];
+        bytes[2] = v[2];
+        bytes[3] = v[3];
+
+        // use native endianness
+        let addr = u32::from_ne_bytes(bytes);
         SocketAddr { addr }
     }
 }
