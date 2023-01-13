@@ -1,6 +1,6 @@
 use clap::Parser;
 
-#[derive(Parser, Default, Debug, Copy)]
+#[derive(Parser, Default, Debug, Clone)]
 #[clap(author="Romain Agostinelli", version, about)]
 /// Application to attach to a network namespace and capable or reporting traffic usage information,
 /// Flow creation an update and also capable of modifying the traffic control settings.
@@ -14,9 +14,9 @@ pub struct ReporterConfig {
     #[clap(long)]
     /// The id of the software. It is used to know which instance send info on the flow socket.
     pub id: u32,
-    #[clap(default_value_t=5, short, long)]
+    #[clap(default_value_t=5f32, short, long)]
     /// Percentage variation used to determine if a flow has changed or not.
-    pub percentage_variation: u32,
+    pub percentage_variation: f32,
     #[clap(default_value_t=5, short, long)]
     /// Threshold defining which bandwidth report to considerate. All flow with a throughput under
     /// or equal to this threshold will be ignored.
@@ -26,9 +26,9 @@ pub struct ReporterConfig {
     #[clap(default_value_t=2000, short, long)]
     /// Duration in milliseconds after what a flow is considered finished. If not detection to a certain
     /// destination is made after this period of time, the flow will be considered as no more existent.
-    pub kill_flow_duration_ms: u32,
+    pub kill_flow_duration_ms: u64,
     #[clap(default_value_t=String::from("eth0"), long)]
     /// Network interface to monitor
-    pub network_interface: u32,
+    pub network_interface: String,
 
 }

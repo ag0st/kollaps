@@ -21,6 +21,7 @@ pub struct TCManager {
 
 }
 
+#[allow(dead_code)]
 impl TCManager {
     pub fn new() -> TCManager {
         unsafe {

@@ -8,6 +8,7 @@ use tokio::process;
 
 use common::{Error, ErrorKind, Result, Subnet};
 
+#[allow(dead_code)]
 pub struct BaseCommand(process::Command);
 
 impl Deref for BaseCommand {
@@ -24,6 +25,7 @@ impl DerefMut for BaseCommand {
     }
 }
 
+#[allow(dead_code)]
 impl BaseCommand {
     pub fn new() -> BaseCommand {
         let cmd = process::Command::new("docker");
@@ -97,7 +99,7 @@ impl BaseCommand {
     }
 }
 
-
+#[allow(dead_code)]
 pub struct RunOpts {
     rm: bool,
     detach: bool,
@@ -109,8 +111,7 @@ pub struct RunOpts {
     ip: Option<IpAddr>,
 }
 
-// sudo nsenter -t $(docker inspect -f '{{.State.Pid}}' $1) -n target/release/reporter
-
+#[allow(dead_code)]
 impl RunOpts {
     pub fn new() -> RunOpts {
         RunOpts {
@@ -158,18 +159,20 @@ impl RunOpts {
     }
 }
 
-
+#[allow(dead_code)]
 pub struct NetworkCommand {
     command: BaseCommand,
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum NetworkDriver {
     Bridge,
     MacVlan,
     IpVlan,
 }
 
+#[allow(dead_code)]
 impl NetworkDriver {
     fn to_arg(&self) -> &str {
         match self {
@@ -180,6 +183,7 @@ impl NetworkDriver {
     }
 }
 
+#[allow(dead_code)]
 impl NetworkCommand {
     pub async fn create(mut self, opts: &mut NetworkCreateOpts, name: &str) -> Result<Output> {
         self.command.arg("create");
@@ -243,11 +247,13 @@ impl NetworkCommand {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct NetworkLsOpts {
     filters: HashMap<String, String>,
     quiet: bool,
 }
 
+#[allow(dead_code)]
 impl NetworkLsOpts {
     pub fn new() -> NetworkLsOpts {
         NetworkLsOpts { filters: HashMap::new(), quiet: false }
@@ -265,6 +271,7 @@ impl NetworkLsOpts {
 
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct NetworkCreateOpts {
     driver: NetworkDriver,
     gateway: Option<IpAddr>,
@@ -274,6 +281,7 @@ pub struct NetworkCreateOpts {
 }
 
 
+#[allow(dead_code)]
 impl NetworkCreateOpts {
     pub fn new() -> NetworkCreateOpts {
         NetworkCreateOpts {
@@ -311,6 +319,7 @@ impl NetworkCreateOpts {
     }
 }
 
+#[allow(dead_code)]
 pub async fn start_docker() -> Result<Output> {
     let mut cmd = process::Command::new("sudo systemctl");
     cmd.arg("start")
@@ -318,7 +327,7 @@ pub async fn start_docker() -> Result<Output> {
     launch_command_and_get_output(cmd).await
 }
 
-
+#[allow(dead_code)]
 async fn launch_command_and_get_output(mut com: process::Command) -> Result<Output> {
     let res = com.output().await;
     match res {

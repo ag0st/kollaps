@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use crate::{deserialize, Error, ErrorKind, Result, serialize, SocketAddr};
+use crate::{deserialize, Error, ErrorKind, Result, serialize, SocketAddr, ToBytesSerialize};
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -146,7 +146,7 @@ impl Display for TCMessage {
             TCMessage::TCUpdate(_) => write!(f, "TCUpdate"),
             TCMessage::TCDisconnect => write!(f, "TCDisconnect"),
             TCMessage::TCReconnect => write!(f, "TCReconnect"),
-            TCMessage::TCTeardown() => write!(f, "TCTeardown"),
+            TCMessage::TCTeardown => write!(f, "TCTeardown"),
         }
     }
 }

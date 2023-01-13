@@ -1,10 +1,8 @@
-use std::borrow::Borrow;
 use std::net::IpAddr;
-use std::num::ParseIntError;
 use std::process::Output;
 use std::str::FromStr;
 
-use cmd::{BaseCommand, NetworkCommand, NetworkCreateOpts, NetworkDriver, NetworkLsOpts, RunOpts};
+use cmd::{BaseCommand, NetworkCreateOpts, NetworkDriver, NetworkLsOpts, RunOpts};
 use common::{Error, ErrorKind, Result, Subnet};
 
 mod cmd;

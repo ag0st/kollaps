@@ -7,6 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 use common::{Error, ErrorKind, ErrorProducer, Result};
+use async_trait::async_trait;
 use crate::{CONTENT_LENGTH_LENGTH, get_size, Handler, prepare_data_to_send, ProtoBinding, Protocol, Sendable, ToSocketAddr};
 
 pub struct Unix {}
@@ -17,17 +18,17 @@ impl<T: Sendable, H: Handler<T> + 'static> Protocol<T, H, UnixBinding<T, H>> for
         match addr.as_unix_socket_address() {
             None => Err(Error::new("nethelper unix socket", ErrorKind::InvalidData, "The address given cannot be converted in unix socket")),
             Some(path) => {
-                UnixBinding {
+                Ok(UnixBinding {
                     path,
                     mode: UnixBindingMode::None,
                     handler,
                     close_channel: None,
                     unit_type: PhantomData,
-                }
+                })
             }
         }
     }
-    async fn bind<'a>(handler: Option<H>) -> Result<UnixBinding<T, H>> where T: 'a, H: 'a {
+    async fn bind<'a>(_handler: Option<H>) -> Result<UnixBinding<T, H>> where T: 'a, H: 'a {
         Err(Error::new("nethelper unix socket", ErrorKind::Unsupported, "You cannot bind unix socket without giving the path"))
     }
 }
@@ -91,7 +92,7 @@ impl<T: Sendable, H: Handler<T>> UnixBinding<T, H> {
         let size = get_size(buf);
         // create a buffer to store the whole remaining of the message
         let mut buf = BytesMut::with_capacity(size as usize);
-        stream.read_exact(&mut buf).await?;
+        s.read_exact(&mut buf).await?;
         Ok(buf)
     }
 

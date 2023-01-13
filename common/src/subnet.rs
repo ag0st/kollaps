@@ -23,7 +23,7 @@ impl IpMask {
         'external: for b in self.bytes.iter().rev() {
             let b = b.clone();
             let mut bit_count = 0;
-            for i in 0..8 {
+            for _ in 0..8 {
                 if (b >> bit_count) & 1 == 0 {
                     zeros_count = zeros_count + 1;
                     bit_count = bit_count + 1;

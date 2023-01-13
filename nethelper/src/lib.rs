@@ -1,26 +1,20 @@
-use std::borrow::BorrowMut;
-use std::collections::HashSet;
 use std::future::Future;
-use common::{Error, ErrorKind, ErrorProducer, Result};
-use std::marker::PhantomData;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpSocket, TcpStream, UdpSocket, UnixListener, UnixStream};
-use tokio::sync::oneshot;
+use bytes::{BufMut, BytesMut};
+
+use common::{Error, ErrorKind, Result, ToBytesSerialize};
+pub use tcp::{TCP, TCPBinding};
+pub use udp::{UDP, UDPBinding};
+pub use unix::{Unix, UnixBinding};
 
 mod unix;
 mod udp;
 mod tcp;
-
-pub use unix::{UnixBinding, Unix};
-pub use udp::{UDP, UDPBinding};
-pub use tcp::{TCP, TCPBinding};
 
 const CONTENT_LENGTH_LENGTH: usize = 2;
 const BROADCAST_ADDR: &str = "255.255.255.255";
@@ -87,10 +81,6 @@ fn check_is_socket(val: &str) -> Option<PathBuf> {
 // ------------------------------------------------------------------------------------------------
 //                           DEFINING TRAITS FOR HANDLERS
 
-
-pub trait ToBytesSerialize {
-    fn serialize(&self) -> Bytes;
-}
 
 pub type Responder<T> = Arc<dyn Fn(BytesMut) -> Pin<Box<dyn Future<Output=Option<T>> + Send>> + Send + Sync>;
 pub type ResponderOnce<T> = Box<dyn FnOnce(BytesMut) -> Pin<Box<dyn Future<Output=Option<T>> + Send>> + Send + Sync>;

@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 nethelper = { path = "../nethelper" }
+clap = { workspace = true }
 redbpf = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -16,5 +17,6 @@ futures = { workspace = true }
 lockfree = { workspace = true }
 libloading = { workspace = true }
 bytes = { workspace = true }
+async-trait = { workspace = true }
 # This is SUPER IMPORTANT! It doesn't launch with zero 0.1.3
 zero = "=0.1.2"

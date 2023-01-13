@@ -10,8 +10,8 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
 use cgraph::CGraph;
-use common::{deserialize, Error, ErrorKind, Result, serialize};
-use nethelper::{ToBytesSerialize, ToSocketAddr};
+use common::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
+use nethelper::{ToSocketAddr};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct NodeInfo {

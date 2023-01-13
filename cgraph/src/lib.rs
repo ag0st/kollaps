@@ -1,7 +1,6 @@
 use std::cmp::min;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::io;
 use common::{Error, ErrorKind, ErrorProducer, Result};
 
 use serde::{Deserialize, Serialize};
