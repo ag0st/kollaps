@@ -111,14 +111,16 @@ fn update_flows<T: netgraph::Vertex>(mut active_flows: HashSet<Flow<T>>, flow: &
     // If there is enough bandwidth remaining, create the flow and send it to the others
 
     if let Some(bandwidth_between) = bw_graph.bandwidth_between(&flow.source, &flow.destination) {
-        // If there is enough bandwidth remaining, create the flow and send it to the others
+        // If there is enough bandwidth remaining on the path, create the flow and send it to the others
         if bandwidth_between >= flow.target_bandwidth {
             bw_graph.update_edges_along_path_by(&flow.source, &flow.destination, |old_speed| old_speed - flow.target_bandwidth);
             // Add the new flow inside the active flow.
-            active_flows.insert(flow.clone());
+            let mut new_flow = flow.clone();
+            new_flow.bandwidth = flow.target_bandwidth;
+            active_flows.insert(new_flow);
         } else {
             // new_flows contains now all active flows impacted by the update/creation of the flow
-            // with their new values. It also contain the updated/created flow with its values.
+            // with their new values. It also contains the updated/created flow with its values.
             let new_flows = update_active_flows(flow, &active_flows, &graph);
 
             // we must replace the old values of the flows inside our "active flows set"
@@ -174,6 +176,12 @@ fn update_active_flows<T: netgraph::Vertex>(flow_updated: &Flow<T>, active_flows
     // 1. Find all active flows that share links and gather these links.
     let (shared_links, mut impacted_flows) =
         get_shared_links_and_impacted_flows(flow_updated, active_flows, original_graph);
+
+    // If there is no links impacted by changes, no need to go further.
+    // We can simply send back an empty HashSet as there is nothing to update
+    if impacted_flows.is_empty() {
+        return HashSet::new()
+    }
 
     // If the flow updated ask for 0 bandwidth, it means that it wants to stop. We can remove it
     // from the impacted flows, this way the calculus will not be made with him.
