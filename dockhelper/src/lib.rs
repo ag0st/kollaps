@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::net::IpAddr;
+use std::num::ParseIntError;
 use std::process::Output;
 use std::str::FromStr;
 
@@ -17,7 +18,6 @@ pub struct DockerHelper {
 impl DockerHelper {
     pub async fn init(interface: &str, subnet: Subnet, gateway: &str) -> Result<DockerHelper> {
         // First, be sure that docker is started
-        //check_command(cmd::start_docker().await)?;
 
         // Check if the IPVlan network exists
         let cmd = BaseCommand::new().network().ls(
@@ -61,12 +61,21 @@ impl DockerHelper {
         check_command(cmd)
     }
 
+    pub async fn get_pid(&self, pid_or_name: &str) -> Result<u32> {
+        let format = format!("{{{{.State.Pid}}}} {}", pid_or_name);
+        let cmd = BaseCommand::new().inspect(&*format).await;
+        let res = check_command(cmd)?;
+        match u32::from_str(&*res) {
+            Ok(val) => Ok(val),
+            Err(e) => Err(Error::wrap("docker helper", ErrorKind::CommandFailed, "cannot parse the pid of the container", e))
+        }
+    }
+
     pub async fn delete_network(self) -> Result<String> {
         let cmd = BaseCommand::new().network().rm(&*self.network_name).await;
         check_command(cmd)
     }
 }
-
 
 
 async fn create_ipvlan_network(interface: &str, subnet: Subnet, gateway: &str) -> Result<()> {

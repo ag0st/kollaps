@@ -9,7 +9,7 @@ use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
-use common::Config;
+use common::RunnerConfig;
 use crate::data::{CJQResponseKind, Event, NodeInfo, WCGraph};
 use nethelper::{Handler, handler_once_box, ProtoBinding, Protocol, Responder, TCP, TCPBinding, UDP, UDPBinding};
 use crate::perf::PerfCtrl;
@@ -91,13 +91,13 @@ pub struct Ctrl {
     udp_binding: UDPBinding<Event, EventHandler>,
     event_handler: EventHandler,
     started: bool,
-    config: Config,
+    config: RunnerConfig,
     heartbeat_misses: HashMap<NodeInfo, usize>,
     cluster_id: Option<uuid::Uuid>,
 }
 
 impl Ctrl {
-    pub async fn build(config: Config) -> Ctrl {
+    pub async fn build(config: RunnerConfig) -> Ctrl {
         // Create the channel trough which the handler will send the incoming events
         let (sender, receiver) = mpsc::channel(config.event_channel_size);
 

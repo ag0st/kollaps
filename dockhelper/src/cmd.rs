@@ -84,13 +84,19 @@ impl BaseCommand {
 
         launch_command_and_get_output(self.0).await
     }
-
     pub async fn stop(mut self, name: &str) -> Result<Output> {
         self.arg("stop");
         self.arg(name);
         launch_command_and_get_output(self.0).await
     }
+    pub async fn inspect(mut self, format: &str) -> Result<Output> {
+        self.arg("inspect");
+        self.arg("--format");
+        self.arg(format);
+        launch_command_and_get_output(self.0).await
+    }
 }
+
 
 pub struct RunOpts {
     rm: bool,
@@ -102,6 +108,8 @@ pub struct RunOpts {
     volume: Option<String>,
     ip: Option<IpAddr>,
 }
+
+// sudo nsenter -t $(docker inspect -f '{{.State.Pid}}' $1) -n target/release/reporter
 
 impl RunOpts {
     pub fn new() -> RunOpts {
@@ -305,7 +313,7 @@ impl NetworkCreateOpts {
 
 pub async fn start_docker() -> Result<Output> {
     let mut cmd = process::Command::new("sudo systemctl");
-        cmd.arg("start")
+    cmd.arg("start")
         .arg("docker");
     launch_command_and_get_output(cmd).await
 }
@@ -321,8 +329,7 @@ async fn launch_command_and_get_output(mut com: process::Command) -> Result<Outp
                 let output = String::from_utf8_lossy(&res.stderr).to_string();
                 Err(Error::new("docker helper", ErrorKind::CommandFailed, &*format!("Command {:?} as failed with response: {}", com, output)))
             }
-        },
+        }
         Err(e) => Err(Error::from(e))
     }
-
 }

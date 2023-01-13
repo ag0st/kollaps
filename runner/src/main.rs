@@ -1,7 +1,7 @@
 use std::{env, fs};
 use std::path::Path;
 
-use common::{Config, Error, ErrorKind, Result};
+use common::{RunnerConfig, Error, ErrorKind, Result};
 use cmanager;
 use clap::Parser;
 
@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
     let netmod = check_netmod_executable()?;
 
     // Parse the config and insert the netmod executable path in it
-    let mut config = Config::parse();
+    let mut config = RunnerConfig::parse();
     config.netmod_exec_path = netmod;
 
     // remove mutability

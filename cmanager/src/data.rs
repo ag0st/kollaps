@@ -3,13 +3,14 @@ use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
 use cgraph::CGraph;
-use common::{Error, ErrorKind, Result};
+use common::{deserialize, Error, ErrorKind, Result, serialize};
 use nethelper::{ToBytesSerialize, ToSocketAddr};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]
@@ -41,7 +42,11 @@ impl ToSocketAddrs for NodeInfo {
     }
 }
 
-impl ToSocketAddr for NodeInfo {}
+impl ToSocketAddr for NodeInfo {
+    fn as_unix_socket_address(&self) -> Option<PathBuf> {
+        None
+    }
+}
 
 impl NodeInfo {
     pub fn new(addr: impl ToSocketAddr) -> NodeInfo {
@@ -230,14 +235,4 @@ impl Display for Event {
             Event::CHeartbeatReset => write!(f, "CHeartbeatReset"),
         }
     }
-}
-
-
-fn deserialize<'a, T: Deserialize<'a>>(data: &'a str) -> Result<T> {
-    Ok(serde_json::from_str::<T>(data)?)
-}
-
-fn serialize<'a, T: Serialize>(data: &T) -> Vec<u8> {
-    let json = serde_json::to_string(data).unwrap();
-    json.as_bytes().to_vec()
 }
