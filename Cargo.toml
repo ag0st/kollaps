@@ -9,7 +9,8 @@ members = [
     "netgraph",
     "bwsync",
     "dockhelper",
-    "emulation"
+    "emulation",
+    "reporter"
 ]
 
 
@@ -29,6 +30,8 @@ redbpf-probes = { version = "2.3.0" }
 tracing-subscriber = "0.3.16"
 tracing = "0.1"
 futures = "0.3"
+lockfree = "0.5.1"
+libloading = "0.7.3"
 
 
 # Need to override setting in development mode because it uses
