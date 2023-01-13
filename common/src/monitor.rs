@@ -20,7 +20,6 @@ pub struct SocketAddr {
 impl fmt::Display for SocketAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Transmut is too much unsafe! It depends on the endianness of the machine
-        let mut octets = [0u8; 4];
         // use native endianness
         let octets = self.addr.to_ne_bytes();
         write!(f, "{:^3}.{:^3}.{:^3}.{:^3}", octets[3], octets[2], octets[1], octets[0])
@@ -52,7 +51,8 @@ impl SocketAddr {
         }
     }
     pub fn to_ip_addr(&self) -> IpAddr {
-        IpAddr::V4(Ipv4Addr::from(self.addr))
+        let octets = self.addr.to_ne_bytes();
+        IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
     }
 }
 
