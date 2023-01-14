@@ -1,6 +1,68 @@
 use std::fmt::{Display, Formatter};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use crate::{Error, ErrorKind, Result};
+
+pub trait ToSocketAddr: ToSocketAddrs + Send + Sync {
+    fn to_socket_addr(&self) -> Result<SocketAddr> {
+        let producer = Error::producer("socket address");
+        let mut addrs = match self.to_socket_addrs() {
+            Ok(iter) => iter,
+            Err(err) => {
+                return Err(producer.wrap(ErrorKind::NotASocketAddr, "Cannot convert into a Socket Address", err));
+            }
+        };
+        if let Some(addr) = addrs.next() {
+            let addr = addr as SocketAddr;
+            // take the first
+            Ok(addr)
+        } else {
+            Err(producer.create(ErrorKind::NotASocketAddr, "No address found"))
+        }
+    }
+    fn as_unix_socket_address(&self) -> Option<PathBuf>;
+}
+
+impl ToSocketAddr for (&str, u16) {
+    fn as_unix_socket_address(&self) -> Option<PathBuf> {
+        None
+    }
+}
+
+impl ToSocketAddr for &str {
+    fn as_unix_socket_address(&self) -> Option<PathBuf> {
+        check_is_socket(self.clone())
+    }
+}
+
+impl ToSocketAddr for SocketAddr {
+    fn as_unix_socket_address(&self) -> Option<PathBuf> {
+        None
+    }
+}
+
+impl ToSocketAddr for String {
+    fn as_unix_socket_address(&self) -> Option<PathBuf> {
+        check_is_socket(self.as_str().clone())
+    }
+}
+
+fn check_is_socket(val: &str) -> Option<PathBuf> {
+    let path = Path::new(val);
+
+    if path.is_absolute() {
+        if path.extension().unwrap() == "sock" {
+            return Some(PathBuf::from(path));
+        }
+        eprintln!("Cannot parse the socket path, need .sock extension");
+    } else {
+        eprintln!("Cannot parse the socket path, need absolute path!");
+    }
+    None
+}
+
+
 
 #[derive(Clone)]
 pub struct IpMask {

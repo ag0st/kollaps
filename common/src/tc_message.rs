@@ -1,5 +1,4 @@
 use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use crate::{deserialize, Error, ErrorKind, Result, serialize, SocketAddr, ToBytesSerialize};
@@ -28,21 +27,6 @@ impl FlowConf {
             dest,
             throughput,
         }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Container {
-    pub image: String,
-    pub ip: SocketAddr,
-    pub name: String,
-    pub pid: u32,
-}
-
-// Hash on the IP as it must be unique
-impl Hash for Container {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.ip.addr.hash(state)
     }
 }
 

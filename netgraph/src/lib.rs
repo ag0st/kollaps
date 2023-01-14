@@ -55,6 +55,8 @@ pub struct Link<T> {
     pub source: T,
     pub destination: T,
     pub bandwidth: usize,
+    pub drop: f32,
+    pub latency: f32,
     pub duplex: Duplex,
 }
 
@@ -66,6 +68,8 @@ impl<T: Vertex> Clone for Link<T> {
             source: self.source.clone(),
             destination: self.destination.clone(),
             bandwidth: self.bandwidth,
+            latency: self.latency,
+            drop: self.drop,
             duplex: self.duplex,
         }
     }
@@ -122,6 +126,8 @@ impl<T: Vertex> Link<T> {
             source,
             destination,
             bandwidth,
+            latency: 0f32,
+            drop: 0f32,
             duplex: Duplex::FullDuplex,
         }
     }

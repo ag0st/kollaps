@@ -1,21 +1,21 @@
-use common::{Error, ErrorKind, Result};
+use common::{ClusterNodeInfo, Error, ErrorKind, Result, ToSocketAddr};
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::{Mutex, oneshot};
 
-use crate::data::{Event, NodeInfo};
-use nethelper::{handler_once_box, ProtoBinding, Protocol, Responder, TCP, TCPBinding, ToSocketAddr};
+use crate::data::{Event};
+use nethelper::{handler_once_box, ProtoBinding, Protocol, Responder, TCP, TCPBinding};
 
 pub struct PerfCtrl {
-    iperf3_info: NodeInfo,
+    iperf3_info: ClusterNodeInfo,
     test_mutex: Arc<Mutex<bool>>,
     test_duration: u8,
 }
 
 impl PerfCtrl {
-    pub async fn new(iperf3_info: NodeInfo, test_duration: u8) -> PerfCtrl {
+    pub async fn new(iperf3_info: ClusterNodeInfo, test_duration: u8) -> PerfCtrl {
         PerfCtrl {
             iperf3_info,
             test_mutex: Arc::new(Mutex::new(false)),

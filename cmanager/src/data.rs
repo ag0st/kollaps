@@ -1,72 +1,17 @@
-use std::vec;
-use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
 use cgraph::CGraph;
-use common::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
-use nethelper::{ToSocketAddr};
-
-#[derive(Serialize, Deserialize, Debug, Clone, Hash)]
-pub struct NodeInfo {
-    pub ip_addr: String,
-    pub port: u16,
-}
-
-impl Display for NodeInfo {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}:{}]", self.ip_addr, self.port)
-    }
-}
-
-impl Eq for NodeInfo {}
-
-impl PartialEq for NodeInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.ip_addr.eq_ignore_ascii_case(other.ip_addr.borrow())
-            && self.port.eq(other.port.borrow())
-    }
-}
-
-impl ToSocketAddrs for NodeInfo {
-    type Iter = vec::IntoIter<SocketAddr>;
-
-    fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-        (self.ip_addr.clone(), self.port.clone()).to_socket_addrs()
-    }
-}
-
-impl ToSocketAddr for NodeInfo {
-    fn as_unix_socket_address(&self) -> Option<PathBuf> {
-        None
-    }
-}
-
-impl NodeInfo {
-    pub fn new(addr: impl ToSocketAddr) -> NodeInfo {
-        let sa = addr.to_socket_addr().expect("cannot get the socket addr");
-        NodeInfo { ip_addr: sa.ip().to_string(), port: sa.port() }
-    }
-}
-
-impl ToBytesSerialize for NodeInfo {
-    fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-        buf.put_slice(serialize(self).as_slice());
-        Bytes::from(buf)
-    }
-}
+use common::{ClusterNodeInfo, deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
 
 // New Type pattern for CGraph:
 // https://doc.rust-lang.org/book/ch19-03-advanced-traits.html#using-the-newtype-pattern-to-implement-external-traits-on-external-types
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct WCGraph(CGraph<NodeInfo>);
+pub struct WCGraph(CGraph<ClusterNodeInfo>);
 
 impl ToBytesSerialize for WCGraph {
     fn serialize(&self) -> Bytes {
@@ -77,7 +22,7 @@ impl ToBytesSerialize for WCGraph {
 }
 
 impl Deref for WCGraph {
-    type Target = CGraph<NodeInfo>;
+    type Target = CGraph<ClusterNodeInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -98,7 +43,7 @@ impl WCGraph {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CJQResponseKind {
-    Accepted((NodeInfo, String)),
+    Accepted((ClusterNodeInfo, String)),
     Wait(Duration),
 }
 
@@ -108,15 +53,15 @@ pub enum Event {
     CGraphGet,
     CGraphSend(WCGraph),
     CJQResponse(CJQResponseKind),
-    CJQRequest(NodeInfo),
+    CJQRequest(ClusterNodeInfo),
     CJQRetry,
     CJQAbort,
-    CHeartbeat((NodeInfo, String)),
+    CHeartbeat((ClusterNodeInfo, String)),
     CHeartbeatCheck,
     CHeartbeatReset,
-    NodeFailure(NodeInfo),
+    NodeFailure(ClusterNodeInfo),
     PClient,
-    PServer(NodeInfo),
+    PServer(ClusterNodeInfo),
 }
 
 impl Event {
@@ -148,19 +93,19 @@ impl Event {
             }
             0x0003 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
-                let node_info = deserialize::<NodeInfo>(data)?;
+                let node_info = deserialize::<ClusterNodeInfo>(data)?;
                 Ok(Event::CJQRequest(node_info))
             }
             0x0004 => Ok(Event::CJQRetry),
             0x0005 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
-                let node_info = deserialize::<(NodeInfo, String)>(data)?;
+                let node_info = deserialize::<(ClusterNodeInfo, String)>(data)?;
                 Ok(Event::CHeartbeat(node_info))
             }
             0x0006 => Ok(Event::PClient),
             0x0007 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
-                let node_info = deserialize::<NodeInfo>(data)?;
+                let node_info = deserialize::<ClusterNodeInfo>(data)?;
                 Ok(Event::PServer(node_info))
             }
             0x0009 if data.is_some() => {
@@ -170,7 +115,7 @@ impl Event {
             }
             0x000A if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
-                let node_info = deserialize::<NodeInfo>(data)?;
+                let node_info = deserialize::<ClusterNodeInfo>(data)?;
                 Ok(Event::NodeFailure(node_info))
             }
             0x000B => Ok(Event::CHeartbeatCheck),

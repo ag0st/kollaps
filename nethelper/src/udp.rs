@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use tokio::net::UdpSocket;
 
-use common::{Error, ErrorKind, ErrorProducer, Result};
+use common::{Error, ErrorKind, ErrorProducer, Result, ToSocketAddr};
 
-use crate::{BROADCAST_ADDR, CONTENT_LENGTH_LENGTH, get_size, Handler, prepare_data_to_send, ProtoBinding, Protocol, Sendable, ToSocketAddr};
+use crate::{BROADCAST_ADDR, CONTENT_LENGTH_LENGTH, get_size, Handler, prepare_data_to_send, ProtoBinding, Protocol, Sendable};
 
 pub struct UDP {}
 

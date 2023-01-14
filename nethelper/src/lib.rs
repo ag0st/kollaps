@@ -1,13 +1,11 @@
 use std::future::Future;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 
-use common::{Error, ErrorKind, Result, ToBytesSerialize};
+use common::{Result, ToBytesSerialize, ToSocketAddr};
 pub use tcp::{TCP, TCPBinding};
 pub use udp::{UDP, UDPBinding};
 pub use unix::{Unix, UnixBinding};
@@ -19,68 +17,6 @@ mod tcp;
 const CONTENT_LENGTH_LENGTH: usize = 2;
 const BROADCAST_ADDR: &str = "255.255.255.255";
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0:0";
-
-// ------------------------------------------------------------------------------------------------
-//                     DEFINING TO SOCKET TRAIT FOR EASY IP/PORT USE
-
-
-pub trait ToSocketAddr: ToSocketAddrs + Send + Sync {
-    fn to_socket_addr(&self) -> Result<SocketAddr> {
-        let producer = Error::producer("socket address");
-        let mut addrs = match self.to_socket_addrs() {
-            Ok(iter) => iter,
-            Err(err) => {
-                return Err(producer.wrap(ErrorKind::NotASocketAddr, "Cannot convert into a Socket Address", err));
-            }
-        };
-        if let Some(addr) = addrs.next() {
-            let addr = addr as SocketAddr;
-            // take the first
-            Ok(addr)
-        } else {
-            Err(producer.create(ErrorKind::NotASocketAddr, "No address found"))
-        }
-    }
-    fn as_unix_socket_address(&self) -> Option<PathBuf>;
-}
-
-impl ToSocketAddr for (&str, u16) {
-    fn as_unix_socket_address(&self) -> Option<PathBuf> {
-        None
-    }
-}
-
-impl ToSocketAddr for &str {
-    fn as_unix_socket_address(&self) -> Option<PathBuf> {
-        check_is_socket(self.clone())
-    }
-}
-
-impl ToSocketAddr for SocketAddr {
-    fn as_unix_socket_address(&self) -> Option<PathBuf> {
-        None
-    }
-}
-
-impl ToSocketAddr for String {
-    fn as_unix_socket_address(&self) -> Option<PathBuf> {
-        check_is_socket(self.as_str().clone())
-    }
-}
-
-fn check_is_socket(val: &str) -> Option<PathBuf> {
-    let path = Path::new(val);
-
-    if path.is_absolute() {
-        if path.extension().unwrap() == "sock" {
-            return Some(PathBuf::from(path));
-        }
-        eprintln!("Cannot parse the socket path, need .sock extension");
-    } else {
-        eprintln!("Cannot parse the socket path, need absolute path!");
-    }
-    None
-}
 
 
 // ------------------------------------------------------------------------------------------------

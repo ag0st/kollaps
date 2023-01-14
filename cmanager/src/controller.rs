@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use common::{Error, ErrorKind, Result};
+use common::{ClusterNodeInfo, Error, ErrorKind, Result};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
 use common::RunnerConfig;
-use crate::data::{CJQResponseKind, Event, NodeInfo, WCGraph};
+use crate::data::{CJQResponseKind, Event, WCGraph};
 use nethelper::{Handler, handler_once_box, ProtoBinding, Protocol, Responder, TCP, TCPBinding, UDP, UDPBinding};
 use crate::perf::PerfCtrl;
 
@@ -42,7 +42,7 @@ impl EventHandler {
 
 #[derive(Clone)]
 struct HeartBeatHandler {
-    sender: mpsc::Sender<NodeInfo>,
+    sender: mpsc::Sender<ClusterNodeInfo>,
 }
 
 #[async_trait]
@@ -60,7 +60,7 @@ impl Handler<Event> for HeartBeatHandler {
 }
 
 impl HeartBeatHandler {
-    pub fn new(sender: mpsc::Sender<NodeInfo>) -> HeartBeatHandler {
+    pub fn new(sender: mpsc::Sender<ClusterNodeInfo>) -> HeartBeatHandler {
         HeartBeatHandler { sender }
     }
 }
@@ -82,7 +82,7 @@ pub struct Ctrl {
     events_receiver: mpsc::Receiver<EventMessage>,
     event_sender: mpsc::Sender<EventMessage>,
     cgraph: WCGraph,
-    my_info: NodeInfo,
+    my_info: ClusterNodeInfo,
     my_speed: usize,
     is_leader: bool,
     adding_new_node: bool,
@@ -92,7 +92,7 @@ pub struct Ctrl {
     event_handler: EventHandler,
     started: bool,
     config: RunnerConfig,
-    heartbeat_misses: HashMap<NodeInfo, usize>,
+    heartbeat_misses: HashMap<ClusterNodeInfo, usize>,
     cluster_id: Option<uuid::Uuid>,
 }
 
@@ -103,19 +103,19 @@ impl Ctrl {
 
         // create the perf component and its handler for network events
         // create the performances controller
-        let perf_ctrl = PerfCtrl::new(NodeInfo::new((&*config.ip_address, config.iperf3_port)), config.perf_test_duration_seconds).await;
+        let perf_ctrl = PerfCtrl::new(ClusterNodeInfo::new((&*config.ip_address, config.iperf3_port)), config.perf_test_duration_seconds).await;
 
         // Create the main handler for incoming events:
         let event_handler = EventHandler::new(sender.clone());
         // bind the handler to the UDP and TCP incoming requests
-        let tcp_binding = TCP::bind_addr(("0.0.0.0", config.event_port), Some(event_handler.clone()))
+        let tcp_binding = TCP::bind_addr(("0.0.0.0", config.cmanager_event_port), Some(event_handler.clone()))
             .await
             .unwrap();
-        let udp_binding = UDP::bind_addr(("0.0.0.0", config.event_port), Some(event_handler.clone()))
+        let udp_binding = UDP::bind_addr(("0.0.0.0", config.cmanager_event_port), Some(event_handler.clone()))
             .await
             .unwrap();
 
-        let my_info = NodeInfo::new((&*config.ip_address, config.event_port));
+        let my_info = ClusterNodeInfo::new((&*config.ip_address, config.cmanager_event_port));
         let my_speed = config.local_speed;
 
         Ctrl {
@@ -253,7 +253,7 @@ impl Ctrl {
                             )))).unwrap();
                         } else {
                             println!("[CJQ REQUEST]: Accept request");
-                            if self.cgraph.nodes().iter().map(|n| n.info()).collect::<HashSet<NodeInfo>>().contains(&info) {
+                            if self.cgraph.nodes().iter().map(|n| n.info()).collect::<HashSet<ClusterNodeInfo>>().contains(&info) {
                                 println!("[CJQ REQUEST]: Detecting reboot of node already in cluster");
                                 // in the case of a reboot, accept it and clear its missed heartbeats
                                 self.heartbeat_misses.remove(&info);
@@ -298,6 +298,7 @@ impl Ctrl {
                 }
                 EventMessage { event: Event::NodeFailure(info), sender: Some(sender) } => {
                     if let Some(missed_heartbeat) = self.heartbeat_misses.get(&info) {
+                        let missed_heartbeat = missed_heartbeat.clone();
                         if missed_heartbeat + 1 >= self.config.heartbeat_misses {
                             // consider this one as lost
                             let previous_size = self.cgraph.size();
@@ -305,7 +306,7 @@ impl Ctrl {
                             assert_eq!(previous_size - 1, self.cgraph.size());
                             if previous_size - 1 != self.cgraph.size() || self.cgraph.nodes().iter()
                                 .map(|n| n.info())
-                                .collect::<HashSet<NodeInfo>>()
+                                .collect::<HashSet<ClusterNodeInfo>>()
                                 .contains(&info) {
                                 eprintln!("[NODE FAILURE]: Issue removing a node from the CGraph");
                             }
@@ -336,7 +337,7 @@ impl Ctrl {
                     println!("[PERF]: Received perf request, starting the server...");
                     self.perf_ctrl.launch_server().await?;
                     println!("[PERF]: Server started");
-                    sender.send(Some(Event::PServer(NodeInfo::new((&*self.my_info.ip_addr, self.config.iperf3_port))))).unwrap()
+                    sender.send(Some(Event::PServer(ClusterNodeInfo::new((&*self.my_info.ip_addr, self.config.iperf3_port))))).unwrap()
                 }
                 _ => eprintln!("Event not recognized"),
             }
@@ -350,7 +351,7 @@ impl Ctrl {
         let cgraph = self.cgraph.clone();
         let my_info = self.my_info.clone();
         let event_sender = self.event_sender.clone();
-        let event_port = self.config.event_port;
+        let event_port = self.config.cmanager_event_port;
         let heartbeat_timeout = self.config.heartbeat_timeout_seconds;
         let heartbeat_sleep = self.config.heartbeat_sleep_seconds;
         let cluster_id = self.cluster_id.unwrap();
@@ -389,7 +390,7 @@ impl Ctrl {
             // compare the cgraph set with this set and for all remaining, send an event
             // telling that their are missing
             // Do not count myself
-            let remaining: HashSet<NodeInfo> = cgraph.nodes().iter()
+            let remaining: HashSet<ClusterNodeInfo> = cgraph.nodes().iter()
                 .filter(|n| !received_info.contains(&n.info()))
                 .map(|n| n.info()).collect();
             println!("[HEARTBEAT CHECK]: Missing nodes: {:?}", remaining);
@@ -442,7 +443,7 @@ impl Ctrl {
 
         let mut binding = UDP::bind(Some(handler)).await?;
         binding.listen()?;
-        binding.broadcast(Event::CJQRequest(self.my_info.clone()), self.config.event_port)
+        binding.broadcast(Event::CJQRequest(self.my_info.clone()), self.config.cmanager_event_port)
             .await?;
         println!("[CJQ REQUEST] BROADCAST");
 
@@ -495,7 +496,7 @@ impl Ctrl {
             .eq(self.my_info.clone().borrow());
     }
 
-    async fn add_myself_in_cluster(&mut self, leader_info: NodeInfo) -> Result<Event> {
+    async fn add_myself_in_cluster(&mut self, leader_info: ClusterNodeInfo) -> Result<Event> {
         println!("[CLUSTER ADD]: Adding myself in the cluster. The leader is: {}", leader_info);
         // We are going to download the CGraph via TCP this time
         let mut conn: TCPBinding<Event, Responder<Event>> = TCP::bind(None).await?;

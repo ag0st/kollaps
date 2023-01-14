@@ -4,6 +4,7 @@ mod subnet;
 mod monitor;
 mod tc_message;
 mod reporter_config;
+mod cluster_node;
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -18,15 +19,16 @@ pub use error::Result;
 pub use error::ErrorProducer;
 
 // Exporting subnet and other structures
-pub use subnet::Subnet;
-pub use subnet::IpMask;
+pub use subnet::{Subnet, IpMask, ToSocketAddr};
 
 // Exporting monitor structures
 pub use monitor::{SocketAddr, Message};
 
 // Exporting tc messages for communication between main app en reporter
-pub use tc_message::{TCMessage, FlowConf, TCConf, Container};
+pub use tc_message::{TCMessage, FlowConf, TCConf};
 
+// exporting the ClusterNodeInfo
+pub use cluster_node::ClusterNodeInfo;
 
 // Utils functions
 pub fn deserialize<'a, T: Deserialize<'a>>(data: &'a str) -> Result<T> {

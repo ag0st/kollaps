@@ -9,13 +9,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 
-use common::{Error, ErrorKind, ErrorProducer, Result};
+use common::{Error, ErrorKind, ErrorProducer, Result, ToSocketAddr};
 
 use crate::Handler;
 use crate::ProtoBinding;
 use crate::Protocol;
 use crate::Sendable;
-use crate::ToSocketAddr;
 
 pub struct Unix {}
 

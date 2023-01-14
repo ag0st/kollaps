@@ -28,8 +28,13 @@ pub struct RunnerConfig {
     /// is the leader.
     pub sufficient_speed: usize,
     #[clap(default_value_t=8080, long)]
-    /// Port used by TCP and UDP connection to communicate events between the nodes of the cluster.
-    pub event_port: u16,
+    /// Port used by TCP and UDP connection to communicate events regarding cluster management
+    /// between the nodes of the cluster.
+    pub cmanager_event_port: u16,
+    #[clap(default_value_t=8081, long)]
+    /// Port used by TCP connection to communicate events regarding emulations between the nodes 
+    /// of the cluster.
+    pub emulation_event_port: u16,
     #[clap(default_value_t=8082, long)]
     /// Port used to negotiate performance testing configuration between nodes.
     pub perf_port: u16,
