@@ -12,6 +12,7 @@ members = [
     "emulation",
     "reporter",
     "reptest",
+    "monitor",
 ]
 
 

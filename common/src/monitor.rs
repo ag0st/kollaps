@@ -4,6 +4,13 @@ use std::ops::Deref;
 use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
+
+// -------------------------------------------------------------------------------------
+// DEFINITIONS HERE MUST BE COMPATIBLE WITH MONITOR.USAGE
+// -------------------------------------------------------------------------------------
+
+
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct Message {
