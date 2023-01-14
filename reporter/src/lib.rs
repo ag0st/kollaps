@@ -51,13 +51,12 @@ impl TCHandler {
 impl Handler<TCMessage> for TCHandler {
     async fn handle(&mut self, bytes: BytesMut) -> Option<TCMessage> {
         if let Ok(mess) = TCMessage::from_bytes(bytes) {
-            println!("Received a TC Message: {}", mess);
             match mess {
                 TCMessage::TCInit(conf) => self.manager.lock().ok()?.init(conf.dest),
                 TCMessage::TCUpdate(conf) => {
                     let manager = self.manager.lock().ok()?;
                     if self.initialized_path.lock().ok()?.contains(&conf.dest) {
-                        if let Some(bw) = conf.bandwidth {
+                        if let Some(bw) = conf.bandwidth_kbitps {
                             manager.change_bandwidth(conf.dest, bw);
                         }
                         if let Some((lat, jit)) = conf.latency_and_jitter {
@@ -67,10 +66,10 @@ impl Handler<TCMessage> for TCHandler {
                             manager.change_loss(conf.dest, drop);
                         }
                     } else {
-                        self.manager.lock().ok()?
+                        manager
                             .initialize_path(
                                 conf.dest,
-                                conf.bandwidth.unwrap(),
+                                conf.bandwidth_kbitps.unwrap(),
                                 conf.latency_and_jitter.unwrap().0,
                                 conf.latency_and_jitter.unwrap().1,
                                 conf.drop.unwrap());
@@ -84,10 +83,10 @@ impl Handler<TCMessage> for TCHandler {
                     self.clean_sender.send(()).await.unwrap();
                     self.manager.lock().ok()?.tear_down();
                 }
-                _ => { eprintln!("received flow message, it must not happens, ignoring") }
+                _ => { eprintln!("[REPORTER]: Received a FLOW message via tc_socket. Issue is happening") }
             }
         } else {
-            eprintln!("Bad message received from the emulation process")
+            eprintln!("[REPORTER]: Received unrecognized message from the Emulation")
         }
         None
     }
@@ -96,18 +95,21 @@ impl Handler<TCMessage> for TCHandler {
 struct Cleaner {
     receiver: mpsc::Receiver<()>,
     listener: UnixBinding<TCMessage, TCHandler>,
+    id: u32,
 }
 
 impl Cleaner {
-    fn build(receiver: mpsc::Receiver<()>, listener: UnixBinding<TCMessage, TCHandler>) -> Cleaner {
+    fn build(receiver: mpsc::Receiver<()>, listener: UnixBinding<TCMessage, TCHandler>, id: u32) -> Cleaner {
         Cleaner {
             receiver,
             listener,
+            id,
         }
     }
     async fn wait_to_clean(mut self) {
-        println!("Received cleaning command");
         self.receiver.recv().await;
+        println!("[REPORTER: {}] - Stopping and cleaning...", self.id);
+        // no really need to to it but it is just to show what we are doing.
         drop(self.listener)
     }
 }
@@ -130,15 +132,16 @@ impl UsageAnalyzer {
         // create cleaner channel
         let (sender, receiver) = mpsc::channel(1);
 
-        // First, connect to the Sockets for sending flow update and receiving traffic control commands
-        //      1. Receive traffic control commands
-        println!("Reporter {} binding on socket", self.config.id);
-        let mut binding = Unix::bind_addr(self.config.tc_socket.clone(), Some(TCHandler::new(sender))).await.unwrap();
-        binding.listen().unwrap();
+        // Connecting to the socket for receiving traffic control commands from the main app.
+        let mut tc_command_binding =
+            Unix::bind_addr(self.config.tc_socket.clone(), Some(TCHandler::new(sender)))
+                .await.unwrap();
+        tc_command_binding.listen().unwrap();
 
-        // Create the cleaner
-        let cleaner = Cleaner::build(receiver, binding);
-        // launch the cleaner in another thread
+        // Create the cleaner, it will hold the socket and drop it (deleting it) when receiving Teardown
+        // event through the tc_command_socket.
+        let cleaner = Cleaner::build(receiver, tc_command_binding, self.config.id);
+        // launch the cleaner in another thread, it will just wait
         tokio::spawn(async move { cleaner.wait_to_clean().await });
 
         // We need to change the socket permission, because we are currently in root mode.
@@ -151,20 +154,21 @@ impl UsageAnalyzer {
         perms.set_mode(0o777); // We do not really care, it is a socket
         fs::set_permissions(tc_socket_path, perms).unwrap();
 
-        //      2. Send flow updates
-        println!("Reporter {} connecting to tc socket", self.config.id);
-        let mut stream = Unix::bind_addr(self.config.flow_socket.clone(), None).await.unwrap();
-        stream.connect().await.unwrap();
+        // Connect to the socket where we will give flow update.
+        let mut flow_socket_stream =
+            Unix::bind_addr(self.config.flow_socket.clone(), None).await.unwrap();
+        flow_socket_stream.connect().await.unwrap();
 
         // Send a message that our socket is ready for connection
-        println!("Reporter {} sending socket ready", self.config.id);
-        stream.send(TCMessage::SocketReady).await.unwrap();
+        flow_socket_stream.send(TCMessage::SocketReady).await.unwrap();
 
         self.listen_ebpf().await?;
-        self.check_flows(stream).await?;
+        self.check_flows(flow_socket_stream).await?;
         Ok(())
     }
 
+    /// Load the ebpf file and attach it to the interface given.
+    /// If there is a problem with loading OR no interface has been attached, it results in an Error.
     async fn load_ebpf(interface: &str) -> Result<Loaded> {
         let mut raw_fds = Vec::new();
         let mut loaded = Loader::load(probe_code()).expect("error loading BPF program");
@@ -182,16 +186,14 @@ impl UsageAnalyzer {
         }
     }
 
+    /// Listen on the ebpf program and insert new value into the
+    /// self.usage map.
     async fn listen_ebpf(&self) -> Result<()> {
-        // launch tokio task to read the events coming from the ebpf program
-        // need to take the loaded ebpf to pass it to the thread
-        // Then load the ebpf file
         let usage = self.usage.clone();
 
+        // launch tokio task to read the events coming from the ebpf program
         let network_int = self.config.network_interface.clone();
-        println!("Listening on eBPF program");
         tokio::spawn(async move {
-
             let mut loaded = Self::load_ebpf(&*network_int).await.unwrap();
             while let Some((name, events)) = loaded.events.next().await {
                 match name.as_str() {
@@ -209,19 +211,28 @@ impl UsageAnalyzer {
         Ok(())
     }
 
+    /// The check flow method is the main loop of the program.
+    /// It reads the value into the self.usage and updates the main program via FlowSocket.
     async fn check_flows(&self, mut stream: UnixBinding<TCMessage, Responder<TCMessage>>) -> Result<()> {
+        println!("[REPORTER: {}] is ready, listening for flows changes", self.config.id);
+
+        // used to store the old values of the flows
         let mut old_values: HashMap<u32, u32> = HashMap::new();
+        // The interval of going through the self.usage map and check for the flow.
         let interval_check = Duration::from_millis(self.config.flow_control_interval);
+        // Duration after which a flow that has not been updated will be considered as no more.
         let kill_flow_duration = Duration::from_millis(self.config.kill_flow_duration_ms);
+        // Main loop
         loop {
+            // Store the entries to remove in another vector. It prevents from deadlock with the map.
             let mut to_remove = Vec::new();
+            // Going through the usage.
             for entry in self.usage.iter() {
                 if entry.val().0 <= self.config.ignore_threshold {
                     continue;
                 }
                 if entry.val().1.elapsed() > kill_flow_duration {
                     let dest = SocketAddr::new(entry.key().clone());
-                    //println!("TERMINATION OF FLOW: {}", dest);
                     old_values.remove(entry.key());
                     // Add it into the to_remove and remove after to not create dead lock
                     to_remove.push(entry.key().clone());
@@ -231,7 +242,6 @@ impl UsageAnalyzer {
                 } else { // updated recently, check if update regarding old value or a new flow
                     if !old_values.contains_key(entry.key()) {
                         let dest = SocketAddr::new(entry.key().clone());
-                        //println!("NEW FLOW: \t {} \t THROUGHPUT {}", dest, entry.val().0);
                         old_values.insert(*entry.key(), entry.val().0);
                         // Send the information to the emulation
                         stream.send(FlowNew(FlowConf::build(self.config.id, dest, Some(entry.val().0)))).await.unwrap();
@@ -243,7 +253,6 @@ impl UsageAnalyzer {
                         let percentage_variation = (old - new).abs() / old * 100f32;
                         if percentage_variation > self.config.percentage_variation {
                             let dest = SocketAddr::new(entry.key().clone());
-                            //println!("UPDATE FLOW: \t {} \t OLD-NEW: {}-{}", dest, old, new);
                             old_values.insert(entry.key().clone(), entry.val().0.clone());
                             // Send the information to the emulation
                             stream.send(FlowUpdate(FlowConf::build(self.config.id, dest, Some(entry.val().0)))).await.unwrap();
@@ -260,7 +269,7 @@ impl UsageAnalyzer {
     }
 }
 
-//retrieve.elf file
+/// retrieve the usage.elf file and return the bytes of the file.
 fn probe_code() -> &'static [u8] {
     include_bytes!("usage.elf")
 }

@@ -39,11 +39,12 @@ impl TCManager {
         }
     }
 
-    pub fn initialize_path(&self, ip: u32, bandwidth: u32, latency: f32, jitter: f32, drop: f32) {
+    /// Initialize a path between ourself an the destination. 
+    /// Bandwidth in KBit/s
+    pub fn initialize_path(&self, ip: u32, bandwidth_kbit: u32, latency: f32, jitter: f32, drop: f32) {
         unsafe {
-            let init_destination: Symbol<unsafe extern fn(u32, u32, f32, f32, f32)> = self.library.get(b"initDestination").unwrap();
-
-            init_destination(ip, bandwidth, latency, jitter, drop);
+            let init_destination: Symbol<unsafe extern fn(u32, u32, f32, f32, f32)> = self.library.get(b"initDestination").expect("Cannot get the initialization method");
+            init_destination(ip, bandwidth_kbit, latency, jitter, drop);
         }
     }
 
@@ -54,10 +55,10 @@ impl TCManager {
         }
     }
 
-    pub fn change_bandwidth(&self, ip: u32, bandwidth: u32) {
+    pub fn change_bandwidth(&self, ip: u32, bandwidth_kbit: u32) {
         unsafe {
-            let change_bw: Symbol<unsafe extern fn(u32, u32)> = self.library.get(b"changeBandwidth").unwrap();
-            change_bw(ip, bandwidth / 1000);
+            let change_bw: Symbol<unsafe extern fn(u32, u32)> = self.library.get(b"changeBandwidth").expect("Cannot get the change bandwidth");
+            change_bw(ip, bandwidth_kbit);
         }
     }
 

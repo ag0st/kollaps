@@ -83,10 +83,11 @@ fn measure_tcp_lifetime(skb: SkBuff) -> SkBuffResult {
                         let new_value = value + len;
                         usage.set(&dst.addr, &new_value);
                         let delta_time_ns = current_time - old_time;
-                        if delta_time_ns > 25_000_000 {
-                            // calculate the throughput Bytes/seconds
+                        if delta_time_ns > 25_000_000 { // 25 ms
+                            // Calculate the throughput Bytes/seconds
                             let delta_time_seconds = delta_time_ns / 1_000_000_000;
-                            let throughput = value * 8 / (delta_time_seconds * 1000 * 1000);
+                            // calculate throughput in Kbit/s
+                            let throughput = value * 8 / (delta_time_seconds * 1000);
                             perf_events.insert(skb.skb as *mut __sk_buff, &Message { dst: dst.addr, throughput: throughput as u32});
                             // // reset usage and time
                             usage.set(&dst.addr, &0);

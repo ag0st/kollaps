@@ -8,7 +8,7 @@ use crate::{deserialize, Error, ErrorKind, Result, serialize, SocketAddr, ToByte
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TCConf {
     pub dest: u32,
-    pub bandwidth: Option<u32>,
+    pub bandwidth_kbitps: Option<u32>,
     pub latency_and_jitter: Option<(f32, f32)>,
     pub drop: Option<f32>,
 }

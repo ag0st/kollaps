@@ -20,7 +20,6 @@ struct FlowHandler {
 impl Handler<TCMessage> for FlowHandler {
     async fn handle(&mut self, bytes: BytesMut) -> Option<TCMessage> {
         let mess = TCMessage::from_bytes(bytes).unwrap();
-        println!("{}", mess);
         self.sender.send(mess).await.unwrap();
         None
     }
@@ -87,8 +86,8 @@ async fn main() {
     let mut binding: UnixBinding<TCMessage, Responder<TCMessage>> = Unix::bind_addr(tc_socket, None).await.unwrap();
     binding.connect().await.unwrap();
     let conf = TCConf {
-        dest: dest.addr,
-        bandwidth: None,
+        dest: ip.addr,
+        bandwidth_kbitps: None,
         latency_and_jitter: None,
         drop: None,
     };
@@ -100,9 +99,9 @@ async fn main() {
         println!("Choose between : [l bandwidth] or [s]");
         let mut conf = TCConf {
             dest: *dest,
-            bandwidth: None,
-            latency_and_jitter: None,
-            drop: None,
+            bandwidth_kbitps: None,
+            latency_and_jitter: Some((0.0, 0.0)),
+            drop: Some(0.0),
         };
 
         let mut reader = io::BufReader::new(tokio::io::stdin());
@@ -133,7 +132,7 @@ async fn main() {
         }
 
         if let Ok(limit) = u32::from_str(iter.next().unwrap()) {
-            conf.bandwidth = Some(limit);
+            conf.bandwidth_kbitps = Some(limit * 8 * 1000);
         } else {
             eprintln!("Cannot parse the limit.");
             continue;
