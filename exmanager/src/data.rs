@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
@@ -78,4 +78,48 @@ struct Emulation {
     uuid: String,
     graph: netgraph::Network<Application>,
     events: Vec<EmulationEvent>,
+}
+
+
+/// A Flow represents data going from the source to the destination.
+/// The bandwidth is the actual bandwidth of the flow and the target bandwidth is what the
+/// actual flow is trying to achieve. The target bandwidth is defined at the beginning of the emulation
+/// and do not change in the time contrary to the bandwidth, which changes regarding the actual use
+/// of the emulated network.
+#[derive(Eq, Clone, Copy)]
+pub struct Flow<T: netgraph::Vertex> {
+    pub source: T,
+    pub destination: T,
+    bandwidth: usize,
+    pub target_bandwidth: usize,
+}
+
+impl<T: netgraph::Vertex> PartialEq for Flow<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.destination == other.destination
+    }
+}
+
+impl<T: netgraph::Vertex> Hash for Flow<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.source.clone(), self.destination.clone()).hash(state)
+    }
+}
+
+impl<T: netgraph::Vertex> Display for Flow<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.bandwidth, self.target_bandwidth)
+    }
+}
+
+impl<T: netgraph::Vertex> Debug for Flow<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self, f)
+    }
+}
+
+impl<T: netgraph::Vertex> Flow<T> {
+    pub fn build(source: T, destination: T, bandwidth: usize, target_bandwidth: usize) -> Flow<T> {
+        Flow { source, destination, bandwidth, target_bandwidth }
+    }
 }
