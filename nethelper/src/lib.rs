@@ -70,11 +70,16 @@ impl ToSocketAddr for String {
 
 fn check_is_socket(val: &str) -> Option<PathBuf> {
     let path = Path::new(val);
-    if path.exists() {
-        Some(PathBuf::from(path))
+
+    if path.is_absolute() {
+        if path.extension().unwrap() == "sock" {
+            return Some(PathBuf::from(path));
+        }
+        eprintln!("Cannot parse the socket path, need .sock extension");
     } else {
-        None
+        eprintln!("Cannot parse the socket path, need absolute path!");
     }
+    None
 }
 
 

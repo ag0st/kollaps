@@ -27,6 +27,10 @@ pub struct ReporterConfig {
     /// Duration in milliseconds after what a flow is considered finished. If not detection to a certain
     /// destination is made after this period of time, the flow will be considered as no more existent.
     pub kill_flow_duration_ms: u64,
+    #[clap(default_value_t=100, short, long)]
+    /// Duration in milliseconds representing the interval in which the control of the flows will be made.
+    /// If you put 0, you will have sustained 100% use of a CPU core.
+    pub flow_control_interval: u64,
     #[clap(default_value_t=String::from("eth0"), long)]
     /// Network interface to monitor
     pub network_interface: String,

@@ -91,10 +91,11 @@ impl BaseCommand {
         self.arg(name);
         launch_command_and_get_output(self.0).await
     }
-    pub async fn inspect(mut self, format: &str) -> Result<Output> {
+    pub async fn inspect(mut self, format: &str, id_or_name: &str) -> Result<Output> {
         self.arg("inspect");
         self.arg("--format");
         self.arg(format);
+        self.arg(id_or_name);
         launch_command_and_get_output(self.0).await
     }
 }

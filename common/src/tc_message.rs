@@ -56,6 +56,7 @@ pub enum TCMessage {
     TCDisconnect,
     TCReconnect,
     TCTeardown,
+    SocketReady,
 }
 
 impl TCMessage {
@@ -102,6 +103,7 @@ impl TCMessage {
             0x0005 => Ok(TCMessage::TCDisconnect),
             0x0006 => Ok(TCMessage::TCReconnect),
             0x0007 => Ok(TCMessage::TCTeardown),
+            0x0008 => Ok(TCMessage::SocketReady),
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -116,6 +118,7 @@ impl TCMessage {
             TCMessage::TCDisconnect => 0x0005,
             TCMessage::TCReconnect => 0x0006,
             TCMessage::TCTeardown => 0x0007,
+            TCMessage::SocketReady => 0x0008,
         }
     }
 }
@@ -147,6 +150,7 @@ impl Display for TCMessage {
             TCMessage::TCDisconnect => write!(f, "TCDisconnect"),
             TCMessage::TCReconnect => write!(f, "TCReconnect"),
             TCMessage::TCTeardown => write!(f, "TCTeardown"),
+            TCMessage::SocketReady => write!(f, "SocketReady"),
         }
     }
 }

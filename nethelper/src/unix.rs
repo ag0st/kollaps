@@ -2,13 +2,20 @@ use std::borrow::BorrowMut;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
+
 use common::{Error, ErrorKind, ErrorProducer, Result};
-use async_trait::async_trait;
-use crate::{CONTENT_LENGTH_LENGTH, get_size, Handler, prepare_data_to_send, ProtoBinding, Protocol, Sendable, ToSocketAddr};
+
+use crate::Handler;
+use crate::ProtoBinding;
+use crate::Protocol;
+use crate::Sendable;
+use crate::ToSocketAddr;
 
 pub struct Unix {}
 
@@ -81,25 +88,20 @@ impl<T: Sendable, H: Handler<T>> UnixBinding<T, H> {
         Ok(())
     }
 
-    async fn read_from_stream(s: &mut UnixStream) -> Result<BytesMut> {
+    async fn read_from_stream(stream: &mut UnixStream) -> Result<BytesMut> {
         // read the message length
-        let mut buf = vec![0u8; CONTENT_LENGTH_LENGTH];
-        let written_size = s.read(&mut buf).await?;
-        if written_size == 0 {
-            return Err(Self::err_producer().create(ErrorKind::UnexpectedEof, "End Of File, stop stream"));
-        }
-        //
-        let size = get_size(buf);
+        let content_length = stream.read_u16().await?;
         // create a buffer to store the whole remaining of the message
-        let mut buf = BytesMut::with_capacity(size as usize);
-        s.read_exact(&mut buf).await?;
-        Ok(buf)
+        let mut buf = vec![0u8; content_length as usize];
+        stream.read_exact(&mut buf).await.unwrap();
+        Ok(BytesMut::from(buf.as_slice()))
     }
 
     async fn write_to_stream(stream: &mut UnixStream, x: T) -> Result<()> {
-        let buf = prepare_data_to_send(x);
-        stream.write_all(buf.as_ref()).await.or_else(|e| {
-            Err(Self::err_producer().wrap(ErrorKind::BadWrite, "Cannot write on the TCP connection", e))
+        let data = x.serialize();
+        stream.write_u16(data.len() as u16).await.unwrap();
+        stream.write_all(data.as_ref()).await.or_else(|e| {
+            Err(Self::err_producer().wrap(ErrorKind::BadWrite, "Cannot write on the Unix Socket connection", e))
         })
     }
 }
@@ -133,7 +135,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UnixBinding<T,
 
         let listener = match self.mode {
             UnixBindingMode::None => {
-                UnixListener::bind(self.path.clone())?
+                UnixListener::bind(&self.path.clone())?
             }
             _ => { return Err(Self::err_producer().create(ErrorKind::BadMode, "Binding already in a mode")); }
         };
@@ -178,7 +180,9 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UnixBinding<T,
                     val = rx => {
                         println!("Stop listening for new Unix connections: {:?}", val);
                         for a in chans {
-                            a.send("Stop listening on Unix Stream").unwrap();
+                            if let Err(_) = a.send("Stop listening on Unix Stream") {
+                                println!("Connection already closed");
+                            }
                         }
                     }
                 }

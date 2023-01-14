@@ -59,10 +59,12 @@ impl DockerHelper {
         check_command(cmd)
     }
 
-    pub async fn get_pid(&self, pid_or_name: &str) -> Result<u32> {
-        let format = format!("{{{{.State.Pid}}}} {}", pid_or_name);
-        let cmd = BaseCommand::new().inspect(&*format).await;
+    pub async fn get_pid(&self, id_or_name: &str) -> Result<u32> {
+        let cmd = BaseCommand::new().inspect("'{{.State.Pid}}'", id_or_name).await;
         let res = check_command(cmd)?;
+        // check that it does not contains punctuation mark as ''
+        // note: need to use a closure because of this: https://github.com/rust-lang/rust/issues/57307
+        let res = res.trim_matches(|c| char::is_ascii_punctuation(&c));
         match u32::from_str(&*res) {
             Ok(val) => Ok(val),
             Err(e) => Err(Error::wrap("docker helper", ErrorKind::CommandFailed, "cannot parse the pid of the container", e))
@@ -95,7 +97,8 @@ pub fn check_command(res: Result<Output>) -> Result<String> {
     match res {
         Ok(output) => {
             let output = String::from_utf8_lossy(&output.stdout).to_string();
-            Ok(output)
+            let output = output.trim();
+            Ok(output.to_string())
         }
         Err(e) => {
             let err = Error::wrap("docker helper", ErrorKind::CommandFailed, "cannot execute command", e);
