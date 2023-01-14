@@ -1,5 +1,5 @@
 [package]
-name = "nethelper"
+name = "reptest"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 common = { path = "../common" }
+nethelper = { path = "../nethelper" }
+dockhelper = { path = "../dockhelper" }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0.85"
 serde = { version = "1.0.136", features = ["derive"] }

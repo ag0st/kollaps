@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 matrix = { path = "../matrix" }
-rand = { workspace = true }
-serde = { workspace = true }
+serde = { version = "1.0.136", features = ["derive"] }
+rand = "0.8.5"

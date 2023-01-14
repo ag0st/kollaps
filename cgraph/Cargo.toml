@@ -9,5 +9,5 @@ edition = "2021"
 matrix = { path = "../matrix" }
 common = { path = "../common" }
 netgraph = { path = "../netgraph" }
-serde = { workspace = true }
-rand = { workspace = true }
+serde = { version = "1.0.136", features = ["derive"] }
+rand = "0.8.5"

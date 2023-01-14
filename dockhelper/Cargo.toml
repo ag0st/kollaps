@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 nethelper = { path = "../nethelper" }
-tokio = { workspace = true }
+tokio = { version = "1", features = ["full"] }
