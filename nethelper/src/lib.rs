@@ -26,6 +26,11 @@ const DEFAULT_BIND_ADDR: &str = "0.0.0.0:0";
 pub type Responder<T> = Arc<dyn Fn(BytesMut) -> Pin<Box<dyn Future<Output=Option<T>> + Send>> + Send + Sync>;
 pub type ResponderOnce<T> = Box<dyn FnOnce(BytesMut) -> Pin<Box<dyn Future<Output=Option<T>> + Send>> + Send + Sync>;
 
+#[derive(Clone)]
+/// NoHandler represents a type that never handle its incoming messages.
+/// Useful when creating binding that never read but only send.
+pub struct NoHandler;
+
 pub fn handler_box<'a, T: 'a + ToBytesSerialize, E: 'a>(f: impl Fn(BytesMut) -> E + Sync + Send + 'static) -> Responder<T>
     where E: Future<Output=Option<T>> + Send + 'static + Sync {
     Arc::new(move |n| Box::pin(f(n)))
@@ -45,6 +50,13 @@ pub trait Handler<T: ToBytesSerialize>: Clone + Send + Sync {
 impl<T: ToBytesSerialize> Handler<T> for Responder<T> {
     async fn handle(&mut self, bytes: BytesMut) -> Option<T> {
         self(bytes).await
+    }
+}
+
+#[async_trait]
+impl<T: ToBytesSerialize> Handler<T> for NoHandler {
+    async fn handle(&mut self, _: BytesMut) -> Option<T> {
+        None
     }
 }
 
