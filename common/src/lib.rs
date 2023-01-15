@@ -1,11 +1,11 @@
 mod runner_config;
 mod error;
 mod subnet;
-mod monitor;
 mod tc_message;
 mod reporter_config;
 mod cluster_node;
 
+use std::net::IpAddr;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 // re-exporting the configs objects
@@ -20,9 +20,6 @@ pub use error::ErrorProducer;
 
 // Exporting subnet and other structures
 pub use subnet::{Subnet, IpMask, ToSocketAddr};
-
-// Exporting monitor structures
-pub use monitor::{SocketAddr, Message};
 
 // Exporting tc messages for communication between main app en reporter
 pub use tc_message::{TCMessage, FlowConf, TCConf};
@@ -40,7 +37,20 @@ pub fn serialize<'a, T: Serialize>(data: &T) -> Vec<u8> {
     json.as_bytes().to_vec()
 }
 
-
 pub trait ToBytesSerialize {
     fn serialize(&self) -> Bytes;
+}
+
+pub trait ToU32IpAddr {
+    fn to_u32(&self) -> Result<u32>;
+}
+
+impl ToU32IpAddr for IpAddr {
+    fn to_u32(&self) -> Result<u32> {
+        match self {
+            IpAddr::V4(a) => Ok(u32::from_ne_bytes(a.octets())),
+            IpAddr::V6(_) =>
+                Err(Error::new("common", ErrorKind::NotASocketAddr, "cannot transform an IpV6 into a u32"))
+        }
+    }
 }

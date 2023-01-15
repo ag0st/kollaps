@@ -15,7 +15,7 @@ mod data;
 pub async fn run(config: RunnerConfig) -> Result<(), Error> {
     // Create the controller:
     println!("Creating the controller...");
-    let mut controller = Ctrl::build(config).await;
+    let mut controller = Ctrl::build(config).await?;
     println!("Controller created.");
     controller.init().await?;
     println!("Initialization of the controller...");

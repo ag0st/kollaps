@@ -1,12 +1,13 @@
 use std::fmt::{Display, Formatter};
+use std::net::IpAddr;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use crate::{deserialize, Error, ErrorKind, Result, serialize, SocketAddr, ToBytesSerialize};
+use crate::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
 
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TCConf {
-    pub dest: u32,
+    pub dest: IpAddr,
     pub bandwidth_kbitps: Option<u32>,
     pub latency_and_jitter: Option<(f32, f32)>,
     pub drop: Option<f32>,
@@ -16,12 +17,12 @@ pub struct TCConf {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FlowConf {
     pub src: u32,
-    pub dest: SocketAddr,
+    pub dest: IpAddr,
     pub throughput: Option<u32>,
 }
 
 impl FlowConf {
-    pub fn build(src: u32, dest: SocketAddr, throughput: Option<u32>) -> FlowConf {
+    pub fn build(src: u32, dest: IpAddr, throughput: Option<u32>) -> FlowConf {
         FlowConf {
             src,
             dest,

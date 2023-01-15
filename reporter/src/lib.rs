@@ -14,15 +14,18 @@ use redbpf::load::{Loaded, Loader};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
-use common::{FlowConf, Message, ReporterConfig, SocketAddr, TCMessage};
+use common::{FlowConf, ReporterConfig, TCMessage, ToU32IpAddr};
 use common::TCMessage::{FlowNew, FlowRemove, FlowUpdate};
 use error::{Error, Result};
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
+use crate::data::MonitorIpAddr;
+use crate::data::Message;
 
 use crate::tc_manager::TCManager;
 
 pub mod error;
 mod tc_manager;
+mod data;
 
 #[derive(Clone)]
 /// TCHandler is used to receive events message from the emulation module in the main application
@@ -52,28 +55,28 @@ impl Handler<TCMessage> for TCHandler {
     async fn handle(&mut self, bytes: BytesMut) -> Option<TCMessage> {
         if let Ok(mess) = TCMessage::from_bytes(bytes) {
             match mess {
-                TCMessage::TCInit(conf) => self.manager.lock().ok()?.init(conf.dest),
+                TCMessage::TCInit(conf) => self.manager.lock().ok()?.init(conf.dest.to_u32().unwrap()),
                 TCMessage::TCUpdate(conf) => {
                     let manager = self.manager.lock().ok()?;
-                    if self.initialized_path.lock().ok()?.contains(&conf.dest) {
+                    if self.initialized_path.lock().ok()?.contains(&conf.dest.to_u32().unwrap()) {
                         if let Some(bw) = conf.bandwidth_kbitps {
-                            manager.change_bandwidth(conf.dest, bw);
+                            manager.change_bandwidth(conf.dest.to_u32().unwrap(), bw);
                         }
                         if let Some((lat, jit)) = conf.latency_and_jitter {
-                            manager.change_latency(conf.dest, lat, jit);
+                            manager.change_latency(conf.dest.to_u32().unwrap(), lat, jit);
                         }
                         if let Some(drop) = conf.drop {
-                            manager.change_loss(conf.dest, drop);
+                            manager.change_loss(conf.dest.to_u32().unwrap(), drop);
                         }
                     } else {
                         manager
                             .initialize_path(
-                                conf.dest,
+                                conf.dest.to_u32().unwrap(),
                                 conf.bandwidth_kbitps.unwrap(),
                                 conf.latency_and_jitter.unwrap().0,
                                 conf.latency_and_jitter.unwrap().1,
                                 conf.drop.unwrap());
-                        self.initialized_path.lock().ok()?.insert(conf.dest);
+                        self.initialized_path.lock().ok()?.insert(conf.dest.to_u32().unwrap());
                     }
                 }
                 TCMessage::TCDisconnect => self.manager.lock().ok()?.disconnect(),
@@ -232,19 +235,19 @@ impl UsageAnalyzer {
                     continue;
                 }
                 if entry.val().1.elapsed() > kill_flow_duration {
-                    let dest = SocketAddr::new(entry.key().clone());
+                    let dest = MonitorIpAddr::new(entry.key().clone());
                     old_values.remove(entry.key());
                     // Add it into the to_remove and remove after to not create dead lock
                     to_remove.push(entry.key().clone());
                     // Send the information to the emulation
-                    stream.send(FlowRemove(FlowConf::build(self.config.id, dest, None))).await.unwrap();
+                    stream.send(FlowRemove(FlowConf::build(self.config.id, dest.to_ip_addr(), None))).await.unwrap();
                     continue;
                 } else { // updated recently, check if update regarding old value or a new flow
                     if !old_values.contains_key(entry.key()) {
-                        let dest = SocketAddr::new(entry.key().clone());
+                        let dest = MonitorIpAddr::new(entry.key().clone());
                         old_values.insert(*entry.key(), entry.val().0);
                         // Send the information to the emulation
-                        stream.send(FlowNew(FlowConf::build(self.config.id, dest, Some(entry.val().0)))).await.unwrap();
+                        stream.send(FlowNew(FlowConf::build(self.config.id, dest.to_ip_addr(), Some(entry.val().0)))).await.unwrap();
                     } else { // This is not a new value! check if it enters in our tolerance
                         // Check the percentage variation, only care if the variation stay within the 5%
                         let old = old_values.get(entry.key()).unwrap().clone() as f32;
@@ -252,10 +255,10 @@ impl UsageAnalyzer {
 
                         let percentage_variation = (old - new).abs() / old * 100f32;
                         if percentage_variation > self.config.percentage_variation {
-                            let dest = SocketAddr::new(entry.key().clone());
+                            let dest = MonitorIpAddr::new(entry.key().clone());
                             old_values.insert(entry.key().clone(), entry.val().0.clone());
                             // Send the information to the emulation
-                            stream.send(FlowUpdate(FlowConf::build(self.config.id, dest, Some(entry.val().0)))).await.unwrap();
+                            stream.send(FlowUpdate(FlowConf::build(self.config.id, dest.to_ip_addr(), Some(entry.val().0)))).await.unwrap();
                         }
                     }
                 }

@@ -1,7 +1,8 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use common::{ClusterNodeInfo, Error, ErrorKind, Result};
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -9,11 +10,12 @@ use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
+use common::{ClusterNodeInfo, Error, ErrorKind, Result};
 use common::RunnerConfig;
-use crate::data::{CJQResponseKind, Event, WCGraph};
 use nethelper::{Handler, handler_once_box, ProtoBinding, Protocol, Responder, TCP, TCPBinding, UDP, UDPBinding};
-use crate::perf::PerfCtrl;
 
+use crate::data::{CJQResponseKind, Event, WCGraph};
+use crate::perf::PerfCtrl;
 
 #[derive(Clone)]
 struct EventHandler {
@@ -97,13 +99,19 @@ pub struct Ctrl {
 }
 
 impl Ctrl {
-    pub async fn build(config: RunnerConfig) -> Ctrl {
+    pub async fn build(config: RunnerConfig) -> Result<Ctrl> {
+        // Parse my ip address
+        let my_ip = match IpAddr::from_str(&*config.ip_address) {
+            Ok(ip) => ip,
+            Err(e) => return Err(Error::wrap("CMANAGER CTRL", ErrorKind::NotASocketAddr, "Cannot parse the IP address", e))
+        };
+
         // Create the channel trough which the handler will send the incoming events
         let (sender, receiver) = mpsc::channel(config.event_channel_size);
 
         // create the perf component and its handler for network events
         // create the performances controller
-        let perf_ctrl = PerfCtrl::new(ClusterNodeInfo::new((&*config.ip_address, config.iperf3_port)), config.perf_test_duration_seconds).await;
+        let perf_ctrl = PerfCtrl::new(ClusterNodeInfo::new(my_ip, config.iperf3_port), config.perf_test_duration_seconds).await;
 
         // Create the main handler for incoming events:
         let event_handler = EventHandler::new(sender.clone());
@@ -115,10 +123,12 @@ impl Ctrl {
             .await
             .unwrap();
 
-        let my_info = ClusterNodeInfo::new((&*config.ip_address, config.cmanager_event_port));
+
+
+        let my_info = ClusterNodeInfo::new(my_ip, config.cmanager_event_port);
         let my_speed = config.local_speed;
 
-        Ctrl {
+        Ok(Ctrl {
             events_receiver: receiver,
             event_sender: sender.clone(),
             cgraph: WCGraph::new(),
@@ -134,7 +144,7 @@ impl Ctrl {
             config,
             heartbeat_misses: HashMap::new(),
             cluster_id: None,
-        }
+        })
     }
 
     pub async fn init(&mut self) -> Result<()> {
@@ -337,7 +347,7 @@ impl Ctrl {
                     println!("[PERF]: Received perf request, starting the server...");
                     self.perf_ctrl.launch_server().await?;
                     println!("[PERF]: Server started");
-                    sender.send(Some(Event::PServer(ClusterNodeInfo::new((&*self.my_info.ip_addr, self.config.iperf3_port))))).unwrap()
+                    sender.send(Some(Event::PServer(ClusterNodeInfo::new(self.my_info.ip_addr, self.config.iperf3_port)))).unwrap()
                 }
                 _ => eprintln!("Event not recognized"),
             }

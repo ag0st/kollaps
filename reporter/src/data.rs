@@ -2,7 +2,7 @@ use ::core::fmt;
 use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Deref;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
+
 
 
 // -------------------------------------------------------------------------------------
@@ -19,12 +19,12 @@ pub struct Message {
 }
 
 #[repr(C)]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct SocketAddr {
+#[derive(Debug, Clone, Copy)]
+pub struct MonitorIpAddr {
     pub addr: u32,
 }
 
-impl fmt::Display for SocketAddr {
+impl fmt::Display for MonitorIpAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Transmut is too much unsafe! It depends on the endianness of the machine
         // use native endianness
@@ -33,7 +33,7 @@ impl fmt::Display for SocketAddr {
     }
 }
 
-impl From<&str> for SocketAddr {
+impl From<&str> for MonitorIpAddr {
     fn from(value: &str) -> Self {
         let v = value.split('.').map(|v| u8::from_str(v).unwrap()).collect::<Vec<u8>>();
         if v.len() != 4 {
@@ -47,13 +47,13 @@ impl From<&str> for SocketAddr {
 
         // use native endianness
         let addr = u32::from_be_bytes(bytes);
-        SocketAddr { addr }
+        MonitorIpAddr { addr }
     }
 }
 
-impl SocketAddr {
+impl MonitorIpAddr {
     pub fn new(addr: u32) -> Self {
-        SocketAddr {
+        MonitorIpAddr {
             addr,
         }
     }
@@ -64,7 +64,7 @@ impl SocketAddr {
 }
 
 
-impl Deref for SocketAddr {
+impl Deref for MonitorIpAddr {
     type Target = u32;
 
     fn deref(&self) -> &Self::Target {
@@ -74,14 +74,14 @@ impl Deref for SocketAddr {
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
+    use std::net::{IpAddr};
     use std::str::FromStr;
-    use crate::SocketAddr;
+    use crate::data::MonitorIpAddr;
 
     #[test]
     fn conversions() {
         let addr = "192.168.1.200";
-        let val = SocketAddr::from(addr);
+        let val = MonitorIpAddr::from(addr);
         assert_eq!(val.addr, 0b11000000_10101000_00000001_11001000);
         assert_eq!(val.to_string(), addr);
         assert_eq!(IpAddr::from_str(addr).unwrap(), val.to_ip_addr())

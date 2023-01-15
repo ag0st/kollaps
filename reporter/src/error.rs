@@ -4,7 +4,8 @@ use std::io;
 pub enum Error {
     EBPF(redbpf::Error),
     IO(io::Error),
-    NoIntAttached
+    NoIntAttached,
+    ParseError
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

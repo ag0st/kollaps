@@ -251,36 +251,6 @@ impl<T: Vertex> Network<T> {
         (net, speeds)
     }
 
-    /// This method print the graph in latex format using tikzpicture.
-    // pub fn print_graph(&self) {
-    //     let name_function = |x: usize| {
-    //         if x < self.nb_term { format!("{x}") } else { format!("S{}", x - self.nb_term) }
-    //     };
-    //     let attributes = |i: usize, j: usize| {
-    //         let mut attr = String::new();
-    //         if i >= self.nb_term && j >= self.nb_term {
-    //             attr.push_str(&*format!(" color=\"red\" penwidth=2.0"))
-    //         }
-    //         attr
-    //     };
-    //     println!("graph network_graph {{");
-    //     for i in 0..self.edges.size() {
-    //         for j in 0..i {
-    //             if let Some(edge) = self.edges[(i, j)] {
-    //                 let name_1 = name_function(i);
-    //                 let name_2 = name_function(j);
-    //                 println!("\t{} -- {} [label={}{}];", name_1, name_2, edge.speed(), attributes(i, j));
-    //             }
-    //         }
-    //     }
-    //     // print the color of each bridges
-    //     for i in self.nb_term..self.edges.size() {
-    //         let name = name_function(i);
-    //         println!("\t{} [color=\"red\"]", name)
-    //     }
-    //     println!("}}")
-    // }
-
     /// Map allow to easily convert a vertex given by a user into its internal representation
     /// (which is its index in the graph)
     /// If the vertex is not in the graph, None is returned.
@@ -301,6 +271,11 @@ impl<T: Vertex> Network<T> {
             (Some(a), Some(b)) => Some((a.clone(), b.clone())),
             _ => None
         }
+    }
+    
+    /// Vertices returns the set of vertices inside the network.
+    pub fn vertices(&self) -> HashSet<T> {
+        self.mapper.keys().map(|k| k.clone()).collect::<HashSet<T>>()
     }
 
     pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: usize) {
@@ -524,6 +499,38 @@ impl<T: Vertex> Network<T> {
         }
         return (bandwidths, parents);
     }
+    
+    
+    // This method print the graph in latex format using tikzpicture.
+    // pub fn print_graph(&self) {
+    //     let name_function = |x: usize| {
+    //         if x < self.nb_term { format!("{x}") } else { format!("S{}", x - self.nb_term) }
+    //     };
+    //     let attributes = |i: usize, j: usize| {
+    //         let mut attr = String::new();
+    //         if i >= self.nb_term && j >= self.nb_term {
+    //             attr.push_str(&*format!(" color=\"red\" penwidth=2.0"))
+    //         }
+    //         attr
+    //     };
+    //     println!("graph network_graph {{");
+    //     for i in 0..self.edges.size() {
+    //         for j in 0..i {
+    //             if let Some(edge) = self.edges[(i, j)] {
+    //                 let name_1 = name_function(i);
+    //                 let name_2 = name_function(j);
+    //                 println!("\t{} -- {} [label={}{}];", name_1, name_2, edge.speed(), attributes(i, j));
+    //             }
+    //         }
+    //     }
+    //     // print the color of each bridges
+    //     for i in self.nb_term..self.edges.size() {
+    //         let name = name_function(i);
+    //         println!("\t{} [color=\"red\"]", name)
+    //     }
+    //     println!("}}")
+    // }
+
 }
 
 /// A Pair represent a node and another value. It is usec by Widest-Path and Shortest-Path algorithm

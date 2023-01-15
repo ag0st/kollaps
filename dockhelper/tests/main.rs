@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr};
-
+    use std::net::IpAddr;
     use std::str::FromStr;
-    use common::{Subnet, Result};
+
+    use common::Subnet;
     use dockhelper::DockerHelper;
 
     #[tokio::test]

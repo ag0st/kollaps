@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::vec;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -9,7 +9,7 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct ClusterNodeInfo {
-    pub ip_addr: String,
+    pub ip_addr: IpAddr,
     pub port: u16,
 }
 
@@ -23,16 +23,16 @@ impl Eq for ClusterNodeInfo {}
 
 impl PartialEq for ClusterNodeInfo {
     fn eq(&self, other: &Self) -> bool {
-        self.ip_addr.eq_ignore_ascii_case(other.ip_addr.borrow())
+        self.ip_addr.eq(other.ip_addr.borrow())
             && self.port.eq(other.port.borrow())
     }
 }
 
 impl ToSocketAddrs for ClusterNodeInfo {
-    type Iter = vec::IntoIter<SocketAddr>;
+    type Iter = vec::IntoIter<std::net::SocketAddr>;
 
     fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-        (self.ip_addr.clone(), self.port.clone()).to_socket_addrs()
+        (self.ip_addr.to_string(), self.port.clone()).to_socket_addrs()
     }
 }
 
@@ -43,9 +43,13 @@ impl ToSocketAddr for ClusterNodeInfo {
 }
 
 impl ClusterNodeInfo {
-    pub fn new(addr: impl ToSocketAddr) -> ClusterNodeInfo {
+    pub fn from(addr: impl ToSocketAddr) -> ClusterNodeInfo {
         let sa = addr.to_socket_addr().expect("cannot get the socket addr");
-        ClusterNodeInfo { ip_addr: sa.ip().to_string(), port: sa.port() }
+        ClusterNodeInfo { ip_addr: sa.ip(), port: sa.port() }
+    }
+
+    pub fn new(addr: IpAddr, port: u16) -> ClusterNodeInfo {
+        ClusterNodeInfo { ip_addr: addr, port }
     }
 }
 

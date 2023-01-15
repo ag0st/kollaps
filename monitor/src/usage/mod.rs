@@ -29,12 +29,12 @@ pub struct Message {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct SocketAddr {
+pub struct MonitorIpAddr {
     pub addr: u32,
 }
 
-impl SocketAddr {
-    pub fn new(addr: u32) -> SocketAddr {
-        SocketAddr { addr }
+impl MonitorIpAddr {
+    pub fn new(addr: u32) -> MonitorIpAddr {
+        MonitorIpAddr { addr }
     }
 }

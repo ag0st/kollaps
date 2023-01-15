@@ -1,10 +1,11 @@
+use std::net::IpAddr;
 use std::process::Command;
 use std::str::FromStr;
 use std::u32;
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use common::{SocketAddr, Subnet, TCConf, TCMessage};
+use common::{Subnet, TCConf, TCMessage, ToU32IpAddr};
 use dockhelper::DockerHelper;
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
 use async_trait::async_trait;
@@ -32,8 +33,8 @@ async fn main() {
 
     let tc_socket = "/tmp/tc_socket.sock";
     let flow_socket = "/tmp/flow_socket.sock";
-    let ip = SocketAddr::from("192.168.1.200");
-    let dest = SocketAddr::from("192.168.1.102");
+    let ip = IpAddr::from_str("192.168.1.200").unwrap();
+    let dest = IpAddr::from_str("192.168.1.102").unwrap();
     let gateway = "192.168.1.1";
     let subnet = Subnet::from(("192.168.1.0", 24));
     let interface = "wlp0s20f3";
@@ -43,7 +44,7 @@ async fn main() {
         .await.unwrap();
 
     // Start the container
-    dock.launch_container("ebpf_test:1.0", "ebpf", ip.to_ip_addr(), None).await.unwrap();
+    dock.launch_container("ebpf_test:1.0", "ebpf", ip, None).await.unwrap();
     // get the pid of the container
     let pid = dock.get_pid("ebpf").await.unwrap();
     println!("Got the pid: {}", pid);
@@ -67,7 +68,7 @@ async fn main() {
             .arg("/home/agost/workspace/MSc/development/kollaps/target/release/reporter")
             .arg("--flow-socket").arg(flow_socket)
             .arg("--tc-socket").arg(tc_socket)
-            .arg("--id").arg(format!("{}", ip.addr))
+            .arg("--id").arg(format!("{}", ip.to_u32().unwrap()))
             .spawn().expect("Cannot launch reporter");
     });
 
@@ -86,7 +87,7 @@ async fn main() {
     let mut binding: UnixBinding<TCMessage, Responder<TCMessage>> = Unix::bind_addr(tc_socket, None).await.unwrap();
     binding.connect().await.unwrap();
     let conf = TCConf {
-        dest: ip.addr,
+        dest: ip,
         bandwidth_kbitps: None,
         latency_and_jitter: None,
         drop: None,
@@ -98,7 +99,7 @@ async fn main() {
     loop {
         println!("Choose between : [l bandwidth] or [s]");
         let mut conf = TCConf {
-            dest: *dest,
+            dest,
             bandwidth_kbitps: None,
             latency_and_jitter: Some((0.0, 0.0)),
             drop: Some(0.0),

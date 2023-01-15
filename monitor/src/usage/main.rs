@@ -20,7 +20,7 @@ use core::mem::{self, MaybeUninit};
 use memoffset::offset_of;
 
 use redbpf_probes::socket_filter::prelude::*;
-use monitor::usage::{Message, SocketAddr};
+use monitor::usage::{Message, MonitorIpAddr};
 
 
 //map to hold perf_events
@@ -62,7 +62,7 @@ fn measure_tcp_lifetime(skb: SkBuff) -> SkBuffResult {
     let dest_addr_offset = eth_len + offset_of!(iphdr, ttl) + 4 + 4;
 
     //Retrieve IPs from skbuff
-    let dst = SocketAddr::new(
+    let dst = MonitorIpAddr::new(
         skb.load::<__be32>(dest_addr_offset)?,
     );
 
