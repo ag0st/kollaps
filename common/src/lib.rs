@@ -22,7 +22,7 @@ pub use error::ErrorProducer;
 pub use subnet::{Subnet, IpMask, ToSocketAddr};
 
 // Exporting tc messages for communication between main app en reporter
-pub use tc_message::{TCMessage, FlowConf, TCConf};
+pub use tc_message::{TCMessage, FlowConf, TCConf, EmulationEvent, EventAction};
 
 // exporting the ClusterNodeInfo
 pub use cluster_node::ClusterNodeInfo;

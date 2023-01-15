@@ -1,12 +1,15 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use common::{ClusterNodeInfo, Error, ErrorKind, Result, TCMessage, ToU32IpAddr};
+use std::sync::Arc;
+use std::time::Duration;
+use common::{ClusterNodeInfo, Error, ErrorKind, Result, TCConf, TCMessage, ToU32IpAddr};
 use netgraph::Network;
 use nethelper::{Handler, NoHandler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use tokio::process::{Child, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, oneshot};
 use dockhelper::DockerHelper;
 use crate::data::{Application, ApplicationKind, ContainerConfig, Emulation};
 
@@ -38,6 +41,7 @@ pub struct EmulCore {
     myself: ClusterNodeInfo,
     flow_socket: Option<UnixBinding<TCMessage, FlowHandler>>,
     emul_id: uuid::Uuid,
+    reporters: Vec<Child>,
 }
 
 impl EmulCore {
@@ -52,19 +56,74 @@ impl EmulCore {
             myself: myself.clone(),
             flow_socket: None,
             emul_id: emul.uuid(),
+            reporters: Vec::new(),
         }
     }
 
-    pub async fn start_emulation(mut self, dock: &DockerHelper) -> Result<()> {
+    pub async fn start_emulation(mut self, dock: &DockerHelper, working: oneshot::Sender<()>) -> Result<()> {
         // First, creating the socket, its handler and the incoming flow message channel.
         let (sender, mut receiver) = mpsc::channel(1000);
         let flow_handler = FlowHandler { sender };
-        let flow_socket_name = generate_flow_socket(&self.emul_id).unwrap();
-        let mut flow_socket_binding: UnixBinding<TCMessage, FlowHandler> = Unix::bind_addr(flow_socket_name, Some(flow_handler)).await.unwrap();
+        let flow_socket_name = generate_flow_socket(&self.emul_id)?;
+        let mut flow_socket_binding: UnixBinding<TCMessage, FlowHandler> = Unix::bind_addr(flow_socket_name.clone(), Some(flow_handler)).await?;
         flow_socket_binding.listen()?;
         self.flow_socket = Some(flow_socket_binding);
 
-        // Launch all the applications I need to emulate
+        // Now we launch all the reporters for the applications it needs to emulate
+
+        // We need to create a Arc references to the receiver as we are going to pass to
+        // an async function named "waiting_on_response" that will wait on the reporter response telling us
+        // that he is ready. We do not create mutex as it is not necessary, we are not
+        // using the reference here, only in the async function, but rust doesn't want to let us.
+        let receiver_arc = Arc::new(Mutex::new(receiver));
+
+        let mut reporter_id = 0;
+        // this temporary hashmap is used to store the socket path of each app returned by the method
+        // launch_reporter_for_app for then, after looping, being able to connect to each of these
+        // sockets.
+        let mut reporters_sockets = HashMap::new();
+        for (app, _) in self.my_apps.borrow() {
+            let (proc, tc_socket_name) = launch_reporter_for_app(self.emul_id, app, dock, flow_socket_name.clone(), reporter_id).await?;
+            // store the process, when I drop, all the child process will drop and be killed.
+            self.reporters.push(proc);
+            // Keep the socket path
+            reporters_sockets.insert(app.clone(), tc_socket_name);
+
+            // waiting response logic: ignore every message and take care only of the SocketReady.
+            // ignoring message is not a big deal as we will begin to consider flows after every thing
+            // is initialized
+            let r = receiver_arc.clone();
+            let waiting_on_response = async move {
+                loop {
+                    if let TCMessage::SocketReady = r.lock().await.recv().await.unwrap() {
+                        break
+                    }
+                }
+            };
+
+            // Wait on the reporter to be ready with a timeout
+            if let Err(_) = tokio::time::timeout(Duration::from_secs(5), waiting_on_response).await {
+                return Err(Error::new("emulcore start", ErrorKind::CommandFailed, "The reporter didn't send ready in the defined timeout"))
+            }
+
+            reporter_id = reporter_id + 1;
+        }
+
+        // Now it is time to connect to each of the TC sockets
+        for (app, socket) in reporters_sockets {
+            // As the reporter is started, we will connect to its socket
+            let mut binding: UnixBinding<TCMessage, NoHandler> = Unix::bind_addr(socket, None).await?;
+            binding.connect().await?;
+            // Send the TC Init
+            let conf = TCConf::default(app.ip_addr());
+            binding.send(TCMessage::TCInit(conf));
+            self.my_apps.insert(app, Some(binding));
+        }
+
+        // Now, all reporters are correctly connected and we are bind to all of these reporter
+        // We can launch the event scheduler
+
+
 
 
         todo!()
@@ -87,8 +146,7 @@ impl EmulCore {
 /// send a TCMessage::SocketReady message via the flow socket.
 /// You can wait to receive one before continuing to be sure it runs the well.
 /// Also, the process is started with kill_on_drop, so if you drop the child process, it will kill it.
-/// The id given to the reporter is the IP of the app it is monitoring in u32 version.
-async fn launch_reporter_for_app(emul_id: uuid::Uuid, app: &Application, dock: &DockerHelper, flow_socket_name: String) -> Result<Child> {
+async fn launch_reporter_for_app(emul_id: uuid::Uuid, app: &Application, dock: &DockerHelper, flow_socket_name: String, reporter_id: u32) -> Result<(Child, String)> {
     let pid = match app.kind() {
         ApplicationKind::BareMetal => panic!("BareMetal not supported yet!"),
         ApplicationKind::Container(config) => {
@@ -113,12 +171,12 @@ async fn launch_reporter_for_app(emul_id: uuid::Uuid, app: &Application, dock: &
         .arg("-n")
         .arg("/home/agost/workspace/MSc/development/kollaps/target/release/reporter")
         .arg("--flow-socket").arg(flow_socket_name)
-        .arg("--tc-socket").arg(tc_socket_name)
-        .arg("--id").arg(format!("{}", app.ip_addr().to_u32()?))
+        .arg("--tc-socket").arg(tc_socket_name.clone())
+        .arg("--id").arg(format!("{}", reporter_id))
         .kill_on_drop(true)
         .spawn().expect(&*format!("Cannot launch reporter for app {}", app.uuid()));
 
-    Ok(child)
+    Ok((child, tc_socket_name))
 }
 
 async fn start_container_and_get_pid(container: ContainerConfig, dock: &DockerHelper, app_ip: IpAddr) -> Result<u32> {

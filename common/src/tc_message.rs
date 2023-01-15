@@ -1,5 +1,7 @@
+use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::net::IpAddr;
+use std::time::Duration;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use crate::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
@@ -11,6 +13,32 @@ pub struct TCConf {
     pub bandwidth_kbitps: Option<u32>,
     pub latency_and_jitter: Option<(f32, f32)>,
     pub drop: Option<f32>,
+}
+
+impl TCConf {
+    pub fn default(dest: IpAddr) -> TCConf {
+        TCConf {
+            dest,
+            bandwidth_kbitps: None,
+            latency_and_jitter: None,
+            drop: None,
+        }
+    }
+    
+    pub fn bandwidth_kbs(&mut self, bw: u32) -> &mut Self {
+        self.bandwidth_kbitps = Some(bw);
+        self
+    }
+
+    pub fn latency_jitter(&mut self, lat: f32, jitter: f32) -> &mut Self {
+        self.latency_and_jitter = Some((lat, jitter));
+        self
+    }
+
+    pub fn drop(&mut self, drop: f32) -> &mut Self {
+        self.drop = Some(drop);
+        self
+    }
 }
 
 
@@ -42,7 +70,33 @@ pub enum TCMessage {
     TCReconnect,
     TCTeardown,
     SocketReady,
+    Event(EmulationEvent)
 }
+
+
+/// EmulationEvent is a programmed dynamic event of the emulation. It is for now, coupled to an application.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct EmulationEvent {
+    pub app_uuid: String,
+    pub time: Duration,
+    pub action: EventAction,
+}
+
+impl PartialOrd for EmulationEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.time.partial_cmp(&other.time)
+    }
+}
+
+/// Represents possible actions of a dynamic event happening to the emulation. It is linked, for now,
+/// to an application via EmulationEvent struct.
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
+pub enum EventAction {
+    Join,
+    Quit,
+    Crash,
+}
+
 
 impl TCMessage {
     pub fn from_bytes(mut buf: BytesMut) -> Result<TCMessage> {
@@ -89,6 +143,11 @@ impl TCMessage {
             0x0006 => Ok(TCMessage::TCReconnect),
             0x0007 => Ok(TCMessage::TCTeardown),
             0x0008 => Ok(TCMessage::SocketReady),
+            0x0009 if data.is_some() => {
+                let data = data.as_deref().unwrap_or("");
+                let event = deserialize::<EmulationEvent>(data)?;
+                Ok(TCMessage::Event(event))
+            }
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -104,6 +163,7 @@ impl TCMessage {
             TCMessage::TCReconnect => 0x0006,
             TCMessage::TCTeardown => 0x0007,
             TCMessage::SocketReady => 0x0008,
+            TCMessage::Event(_) => 0x0009,
         }
     }
 }
@@ -136,6 +196,7 @@ impl Display for TCMessage {
             TCMessage::TCReconnect => write!(f, "TCReconnect"),
             TCMessage::TCTeardown => write!(f, "TCTeardown"),
             TCMessage::SocketReady => write!(f, "SocketReady"),
+            TCMessage::Event(_) => write!(f, "EmulationEvent"),
         }
     }
 }

@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr};
@@ -61,7 +62,7 @@ impl ContainerConfig {
     pub fn command(&self) -> Option<String> {
         match self.image_command.borrow() {
             None => None,
-            Some((_, com)) => com
+            Some((_, com)) => com.clone()
         }
     }
 
@@ -159,22 +160,8 @@ impl Hash for Application {
     }
 }
 
-/// Represents possible actions of a dynamic event happening to the emulation. It is linked, for now,
-/// to an application via EmulationEvent struct.
-#[derive(Serialize, Deserialize, Clone)]
-pub enum EventAction {
-    Join,
-    Quit,
-    Crash,
-}
 
-/// EmulationEvent is a programmed dynamic event of the emulation. It is for now, coupled to an application.
-#[derive(Serialize, Deserialize, Clone)]
-pub struct EmulationEvent {
-    app: Application,
-    time: Duration,
-    action: EventAction,
-}
+
 
 /// Represent an emulation
 #[derive(Serialize, Deserialize)]
