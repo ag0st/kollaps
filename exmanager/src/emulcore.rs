@@ -1,4 +1,3 @@
-use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
@@ -17,7 +16,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 use dockhelper::DockerHelper;
 use crate::bwsync::{remove_flow, update_flows};
-use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, Emulation, Flow};
+use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, Emulation, Flow, Node};
 use crate::scheduler::schedule;
 
 
@@ -45,11 +44,11 @@ pub struct EmulCore {
     // way faster searches across the structures
     // There is no problem of cloning an app regarding mutability. An app itself do not allow
     // to be mutable. It doesn't publish its internals and no permissions is given via calls.
-    graph: Network<Application>,
+    graph: Network<Node>,
     events: Option<Vec<EmulationEvent>>,
-    my_apps: HashMap<Application, (UnixBinding<EmulMessage, NoHandler>, AppStatus)>,
+    my_apps: HashMap<Node, (UnixBinding<EmulMessage, NoHandler>, AppStatus)>,
     other_hosts: HashSet<ClusterNodeInfo>,
-    ip_to_app: HashMap<IpAddr, Application>,
+    ip_to_app: HashMap<IpAddr, Node>,
     myself: ClusterNodeInfo,
     flow_socket: Option<UnixBinding<EmulMessage, FlowHandler>>,
     flow_receiver: Option<Receiver<EmulMessage>>,
@@ -113,12 +112,12 @@ impl EmulCore {
         // Then you can redefine the Application structure to have instead of ip_addr the (ip_addr, port) combo and give this
         // combo to the reporter.
 
-        for app in self.graph.vertices().iter().filter(|app| app.runs_on(&self.myself)) {
-            let (proc, tc_socket_name) = launch_reporter_for_app(self.emul_id, app, dock, flow_socket_name.clone()).await?;
+        for node in self.graph.vertices().iter().filter(|node| node.is_app() && node.as_app().runs_on(&self.myself)) {
+            let (proc, tc_socket_name) = launch_reporter_for_app(self.emul_id, node.as_app(), dock, flow_socket_name.clone(), node.id()).await?;
             // store the process, when I drop, all the child process will drop and be killed.
             self.reporters.push(proc);
             // Keep the socket path
-            reporters_sockets.insert(app.clone(), tc_socket_name);
+            reporters_sockets.insert(node.clone(), tc_socket_name);
 
             // waiting response logic: ignore every message and take care only of the SocketReady.
             // ignoring message is not a big deal as we will begin to consider flows after everything
@@ -138,15 +137,15 @@ impl EmulCore {
         }
 
         // Now it is time to connect to each of the TC sockets
-        for (app, socket) in reporters_sockets.into_iter() {
+        for (node, socket) in reporters_sockets.into_iter() {
             // As the reporter is started, we will connect to its socket
             let mut binding: UnixBinding<EmulMessage, NoHandler> = Unix::bind_addr(socket, None).await?;
             binding.connect().await?;
             // Send the TC Init
-            let conf = TCConf::default(app.ip_addr());
+            let conf = TCConf::default(node.as_app().ip_addr());
             binding.send(EmulMessage::TCInit(conf)).await?;
             // insert everything into my_apps
-            self.my_apps.insert(app, (binding, AppStatus::NotInit));
+            self.my_apps.insert(node, (binding, AppStatus::NotInit));
         }
 
         // Now, all reporters are correctly connected and we are bind to all of these reporter
@@ -172,7 +171,7 @@ impl EmulCore {
         let mut receiver = self.flow_receiver.take().unwrap();
         // Used to store the active flows.
         // Node_id (destination) : Bandwidth
-        let mut active_flows: HashSet<Flow<Application>> = HashSet::new();
+        let mut active_flows: HashSet<Flow<Node>> = HashSet::new();
 
         // This is the bandwidth graph. It represent the remaining bandwidth on the network.
         let mut bw_graph = self.graph.clone();
@@ -185,6 +184,8 @@ impl EmulCore {
                     // Get the concerned application based on their ip addr
                     // For now, only consider flow inside the emulation
                     if let (Some(src), Some(dest)) = (self.ip_to_app.get(&flow_conf.src), self.ip_to_app.get(&flow_conf.dest)) {
+                        // if it got src and destination, we can safelly use them as app.
+
 
                         // Get the defined properties (by the topology) of the path between the source of the flow and the destination.
                         let (max_bandwidth, drop, latency_jitter) = self.graph.properties_between(src, dest)
@@ -217,18 +218,18 @@ impl EmulCore {
                             (active_flows, bw_graph) = update_flows(active_flows, &new_flow, &self.graph, bw_graph);
                         }
                         // If I am the source of the flow, push it to the others
-                        if src.runs_on(&self.myself) {
+                        if src.as_app().runs_on(&self.myself) {
                             // We will have to update the tc regarding if it was updated or removed
                             let tc_conf = if updated_flow {
                                 // If updated, adjust the bandwidth
                                 let flow = active_flows.get(&new_flow).unwrap();
-                                let mut conf = TCConf::default(dest.ip_addr());
+                                let mut conf = TCConf::default(dest.as_app().ip_addr());
                                 conf.bandwidth_kbs(flow.bandwidth);
                                 conf
                             } else {
                                 // If removed, put back the original value
                                 TCConf {
-                                    dest: dest.ip_addr(),
+                                    dest: dest.as_app().ip_addr(),
                                     bandwidth_kbitps: Some(max_bandwidth),
                                     latency_and_jitter: Some(latency_jitter),
                                     drop: Some(drop),
@@ -246,10 +247,9 @@ impl EmulCore {
                 }
                 EmulMessage::Event(event) => {
                     // check if we care about this event, it may not be designated for us
-                    let uuid = Uuid::parse_str(&*event.app_uuid).unwrap();
 
-                    if let Some((app, (tc_socket, status))) =
-                        self.my_apps.iter_mut().filter(|(app, _)| app.runs_on(&self.myself)).last() {
+                    if let Some((node, (tc_socket, status))) =
+                        self.my_apps.iter_mut().filter(|(node, _)| node.is_same_by_id(event.app_id)).last() {
                         match event.action {
                             EventAction::Join => {
                                 // If the status is "NotInit" it means that we have to initialize
@@ -257,12 +257,12 @@ impl EmulCore {
                                 match status {
                                     AppStatus::NotInit => {
                                         // Join can mean rejoin or first join.
-                                        for other_app in self.graph.vertices() {
-                                            if other_app.eq(&app) { continue; }
+                                        for other_node in self.graph.vertices().iter().filter(|n| n.is_app()) {
+                                            if other_node.eq(&node) { continue; }
                                             // get the property and initialize the TC
-                                            if let Some((bw, drop, lat_jitter)) = self.graph.properties_between(&app, &other_app) {
+                                            if let Some((bw, drop, lat_jitter)) = self.graph.properties_between(&node, &other_node) {
                                                 let tc_conf = TCConf {
-                                                    dest: other_app.ip_addr(),
+                                                    dest: other_node.as_app().ip_addr(),
                                                     bandwidth_kbitps: Some(bw),
                                                     latency_and_jitter: Some(lat_jitter),
                                                     drop: Some(drop),
@@ -283,16 +283,16 @@ impl EmulCore {
                             }
                             EventAction::Quit => {
                                 // remove all flows associated with him
-                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &app, &self.graph, &self.other_hosts, self.emul_id.clone()).await;
+                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &node, &self.graph, &self.other_hosts, self.emul_id.clone()).await;
                                 // Send the disconnect
                                 tc_socket.send(EmulMessage::TCDisconnect).await?;
                                 *status = AppStatus::Stopped;
                             }
                             EventAction::Crash => {
-                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &app, &self.graph, &self.other_hosts, self.emul_id.clone()).await;
+                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &node, &self.graph, &self.other_hosts, self.emul_id.clone()).await;
                                 tc_socket.send(EmulMessage::TCDisconnect).await?;
                                 // kill the container app if exists, and if we control the life cycle
-                                match app.kind() {
+                                match node.as_app().kind() {
                                     ApplicationKind::BareMetal => {} // do nothing
                                     ApplicationKind::Container(confi) => {
                                         match confi.image() {
@@ -316,15 +316,15 @@ impl EmulCore {
         Ok(())
     }
 
-    async fn remove_all_flows_from<'a>(mut active_flows: HashSet<Flow<'a, Application>>, mut bw_graph: Network<Application>, app: &Application, graph: &Network<Application>, other_hosts: &HashSet<ClusterNodeInfo>, emul_id: Uuid) -> (HashSet<Flow<'a, Application>>, Network<Application>) {
+    async fn remove_all_flows_from<'a>(mut active_flows: HashSet<Flow<'a, Node>>, mut bw_graph: Network<Node>, node: &Node, graph: &Network<Node>, other_hosts: &HashSet<ClusterNodeInfo>, emul_id: Uuid) -> (HashSet<Flow<'a, Node>>, Network<Node>) {
         let to_remove = active_flows.iter()
-            .filter(|f| f.source == app)
+            .filter(|f| f.source == node)
             .map(|flow| (FlowConf {
-                src: flow.source.ip_addr(),
-                dest: flow.destination.ip_addr(),
+                src: flow.source.as_app().ip_addr(),
+                dest: flow.destination.as_app().ip_addr(),
                 throughput: None,
             }, flow.clone()))
-            .collect::<Vec<(FlowConf, Flow<Application>)>>();
+            .collect::<Vec<(FlowConf, Flow<Node>)>>();
 
         for (fc, f) in to_remove {
             // delete the flow from the active flows
@@ -366,7 +366,7 @@ async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>,
 /// send a TCMessage::SocketReady message via the flow socket.
 /// You can wait to receive one before continuing to be sure it runs the well.
 /// Also, the process is started with kill_on_drop, so if you drop the child process, it will kill it.
-async fn launch_reporter_for_app(emul_id: Uuid, app: &Application, dock: &DockerHelper, flow_socket_name: String) -> Result<(Child, String)> {
+async fn launch_reporter_for_app(emul_id: Uuid, app: &Application, dock: &DockerHelper, flow_socket_name: String, id: u32) -> Result<(Child, String)> {
     let pid = match app.kind() {
         ApplicationKind::BareMetal => panic!("BareMetal not supported yet!"),
         ApplicationKind::Container(config) => {
@@ -381,9 +381,9 @@ async fn launch_reporter_for_app(emul_id: Uuid, app: &Application, dock: &Docker
 
     // Now we are sure the application is running and we have its PID, we can now launch the reporter
     // and attach it to this pid.
-    println!("[EMULCORE {}]: Starting reporter for app: {} : {}", emul_id, app.uuid(), app.name());
+    println!("[EMULCORE {}]: Starting reporter for app: {} : {}", emul_id, id, app.name());
     // Start the reporter with a generated tc_socket
-    let tc_socket_name = generate_tc_socket(&emul_id, &app.uuid())?;
+    let tc_socket_name = generate_tc_socket(&emul_id, id)?;
 
     let child = Command::new("sudo").arg("-S") // must start with super user to enter another pid namespace
         .arg("nsenter")
@@ -394,7 +394,7 @@ async fn launch_reporter_for_app(emul_id: Uuid, app: &Application, dock: &Docker
         .arg("--tc-socket").arg(tc_socket_name.clone())
         .arg("--ip").arg(format!("{}", app.ip_addr()))
         .kill_on_drop(true)
-        .spawn().expect(&*format!("Cannot launch reporter for app {}", app.uuid()));
+        .spawn().expect(&*format!("Cannot launch reporter for app {}", id));
 
     Ok((child, tc_socket_name))
 }
@@ -416,17 +416,19 @@ async fn start_container_and_get_pid(container: ContainerConfig, dock: &DockerHe
 /// Parse emulation allow to take in entry an emulation and then to extract essential information
 /// from it. It is not necessary as every information is already in the emulation but it creating
 /// separate structure for it allows for simpler interaction and less algorithms runs.
-fn parse_emulation(emul: &Emulation, myself: &ClusterNodeInfo) -> (HashMap<IpAddr, Application>, HashSet<ClusterNodeInfo>) {
+fn parse_emulation(emul: &Emulation, myself: &ClusterNodeInfo) -> (HashMap<IpAddr, Node>, HashSet<ClusterNodeInfo>) {
     let other_host = emul.graph.vertices().iter()
+        .filter(|node| node.is_app()).map(|n| n.as_app())
         .filter(|app| !app.runs_on(myself))
         .fold(HashSet::new(), |mut acc, app| {
             acc.insert(app.host());
             acc
         });
     let ip_to_map = emul.graph.vertices().iter()
-        .fold(HashMap::new(), |mut acc, app| {
+        .filter(|node| node.is_app())
+        .fold(HashMap::new(), |mut acc, node| {
             // no need to check two time the same app, already done for my_apps
-            acc.insert(app.ip_addr(), app.clone());
+            acc.insert(node.as_app().ip_addr(), node.clone());
             acc
         });
 
@@ -439,7 +441,7 @@ pub fn generate_flow_socket(emul_id: &uuid::Uuid) -> Result<String> {
     verify_socket_exists(name)
 }
 
-fn generate_tc_socket(emul_id: &uuid::Uuid, app_id: &uuid::Uuid) -> Result<String> {
+fn generate_tc_socket(emul_id: &Uuid, app_id: u32) -> Result<String> {
     let name = format!("/tmp/kollaps_{}_{}_tc.sock", emul_id, app_id);
     verify_socket_exists(name)
 }

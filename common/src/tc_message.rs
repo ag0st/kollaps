@@ -108,7 +108,7 @@ pub enum EmulMessage {
 /// EmulationEvent is a programmed dynamic event of the emulation. It is for now, coupled to an application.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct EmulationEvent {
-    pub app_uuid: String,
+    pub app_id: u32,
     pub time: Duration,
     pub action: EventAction,
 }

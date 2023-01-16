@@ -131,6 +131,18 @@ impl<T: Vertex> Link<T> {
             duplex: Duplex::FullDuplex,
         }
     }
+    fn build_all(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) -> Link<T> {
+        Link {
+            internal_source,
+            internal_destination,
+            source,
+            destination,
+            bandwidth,
+            latency_jitter,
+            drop,
+            duplex: Duplex::FullDuplex,
+        }
+    }
 
     pub fn set_duplex(&mut self, duplex: Duplex) {
         self.duplex = duplex;
@@ -272,7 +284,7 @@ impl<T: Vertex> Network<T> {
             _ => None
         }
     }
-    
+
     /// Vertices returns the set of vertices inside the network.
     pub fn vertices(&self) -> HashSet<T> {
         self.mapper.keys().map(|k| k.clone()).collect::<HashSet<T>>()
@@ -281,6 +293,14 @@ impl<T: Vertex> Network<T> {
     pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: u32) {
         if let Some((from_inter, to_inter)) = self.map_two(from, to) {
             self.links[(from_inter, to_inter)] = Some(Link::build(from.clone(), to.clone(), from_inter, to_inter, bandwidth));
+            // invalidate shortest / widest paths cache!
+            self.clear_path_caches();
+        }
+    }
+
+    pub fn add_edge_with_props(&mut self, from: &T, to: &T, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) {
+        if let Some((from_inter, to_inter)) = self.map_two(from, to) {
+            self.links[(from_inter, to_inter)] = Some(Link::build_all(from.clone(), to.clone(), from_inter, to_inter, bandwidth, latency_jitter, drop));
             // invalidate shortest / widest paths cache!
             self.clear_path_caches();
         }
@@ -416,7 +436,7 @@ impl<T: Vertex> Network<T> {
                 }
             }
             PathStrategy::ShortestPath => {
-                let mut cache =  self.shortest_path_cache.borrow_mut();
+                let mut cache = self.shortest_path_cache.borrow_mut();
                 if let Some(shortest_path) = cache.get(&from) {
                     shortest_path.clone()
                 } else {
@@ -525,8 +545,8 @@ impl<T: Vertex> Network<T> {
         }
         return (bandwidths, parents);
     }
-    
-    
+
+
     // This method print the graph in latex format using tikzpicture.
     // pub fn print_graph(&self) {
     //     let name_function = |x: usize| {
@@ -556,7 +576,6 @@ impl<T: Vertex> Network<T> {
     //     }
     //     println!("}}")
     // }
-
 }
 
 /// A Pair represent a node and another value. It is usec by Widest-Path and Shortest-Path algorithm

@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -85,49 +85,28 @@ impl ContainerConfig {
 /// It is notably used by the topology processor as vertex in the netgraph.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Application {
-    ip_app: IpAddr,
-    host: ClusterNodeInfo,
-    // using String as uuid is not Serializable/Deserializable, but the control is made everywhere
-    uuid: String,
+    ip_app: Option<IpAddr>,
+    host: Option<ClusterNodeInfo>,
     name: String,
     kind: ApplicationKind,
 }
 
 impl Application {
-    pub fn build(ip_app: IpAddr, host: &ClusterNodeInfo, uuid: Uuid, name: String, kind: ApplicationKind) -> Application {
+    pub fn build(ip_app: Option<IpAddr>, host: Option<ClusterNodeInfo>, name: String, kind: ApplicationKind) -> Application {
         Application {
             ip_app,
             host: host.clone(),
-            uuid: uuid.to_string(),
             name,
             kind,
         }
     }
 
-    /// creates a fake application to be then used as key in HashMap or HashSet. As the Hash is
-    /// made on the uuid for an application, it is useful to be able to produce a fake application with
-    /// a defined uuid to use it then has key/entry in these kinds of structures.
-    pub fn fake(uuid: Uuid) -> Application {
-        let fake_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        Application {
-            ip_app: fake_ip,
-            host: ClusterNodeInfo::new(fake_ip, 0),
-            uuid: uuid.to_string(),
-            name: "".to_string(),
-            kind: ApplicationKind::BareMetal,
-        }
-    }
-
     pub fn runs_on(&self, node: &ClusterNodeInfo) -> bool {
-        self.host.eq(node)
+        self.host.as_ref().unwrap().eq(node)
     }
 
     pub fn host(&self) -> ClusterNodeInfo {
-        self.host.clone()
-    }
-
-    pub fn uuid(&self) -> Uuid {
-        parse_uuid_or_crash(self.uuid.clone())
+        self.host.as_ref().unwrap().clone()
     }
 
     pub fn kind(&self) -> ApplicationKind {
@@ -135,7 +114,7 @@ impl Application {
     }
 
     pub fn ip_addr(&self) -> IpAddr {
-        self.ip_app.clone()
+        self.ip_app.unwrap().clone()
     }
 
     pub fn name(&self) -> String {
@@ -146,38 +125,85 @@ impl Application {
 
 impl Display for Application {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[APP {}] Name {} \t App IP {} \t Host IP {} \t", self.uuid, self.name, self.host, self.ip_app)
+        write!(f, "[APP {}] Service IP {} \t Host IP {} \t", self.name, self.host.as_ref().unwrap(), self.ip_app.unwrap())
     }
 }
 
-impl PartialEq for Application {
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum Node {
+    App(u32, Application),
+    Bridge(u32),
+}
+
+impl Node {
+    pub fn is_app(&self) -> bool {
+        match self {
+            Node::App(_, _) => true,
+            Node::Bridge(_) => false
+        }
+    }
+    pub fn as_app(&self) -> &Application {
+        match self {
+            Node::App(_, app) => app,
+            Node::Bridge(_) => panic!("Trying to get the app from a bridge")
+        }
+    }
+    pub fn is_same_by_id(&self, id: u32) -> bool {
+        match self {
+            Node::App(my_id, _) => id.eq(my_id),
+            Node::Bridge(my_id) => id.eq(my_id)
+        }
+    }
+    pub fn id(&self) -> u32 {
+        match self {
+            Node::App(id, _) => id.clone(),
+            Node::Bridge(id) => id.clone()
+        }
+    }
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::App(_, app) => write!(f, "{}", app),
+            Node::Bridge(id) => write!(f, "[BRIDGE {}]", id)
+        }
+    }
+}
+
+impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
-        self.uuid.eq(&other.uuid)
+        match (self, other) {
+            (Node::App(id_1,_), Node::App(id_2, _)) => id_1 == id_2,
+            (Node::Bridge(id_1), Node::Bridge(id_2)) => id_1 == id_2,
+            (_, _) => false
+        }
     }
 }
 
-impl Eq for Application {}
+impl Eq for Node {}
 
-impl Hash for Application {
+impl Hash for Node {
     /// Hash is been made on the id
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.uuid.hash(state)
+        match self {
+            Node::App(id, _) => id.hash(state),
+            Node::Bridge(id) => id.hash(state)
+        }
     }
 }
-
-
-
 
 /// Represent an emulation
 #[derive(Serialize, Deserialize)]
 pub struct Emulation {
     uuid: String,
-    pub graph: Network<Application>,
+    pub graph: Network<Node>,
     pub events: Vec<EmulationEvent>,
 }
 
 impl Emulation {
-    pub fn build(uuid: Uuid, graph: &Network<Application>, events: &Vec<EmulationEvent>) -> Emulation {
+    pub fn build(uuid: Uuid, graph: &Network<Node>, events: &Vec<EmulationEvent>) -> Emulation {
         let events_clone = events.iter().map(|e| e.clone()).collect();
         Emulation {
             uuid: uuid.to_string(),

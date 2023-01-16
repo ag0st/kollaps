@@ -25,6 +25,7 @@ pub enum ErrorKind {
     InvalidData,
     DockerInit,
     Unsupported,
+    Parse,
     /// Must not be used, special case when implement From trait from other error to this one.
     /// It will simply encapsulate the error.
     Wrapped,
@@ -51,7 +52,8 @@ impl Display for ErrorKind {
             ErrorKind::InconsistentState => "Inconsistent State",
             ErrorKind::InvalidData => "Invalid Data",
             ErrorKind::DockerInit => "Docker Initialization",
-            ErrorKind::Unsupported => "Operation not supported"
+            ErrorKind::Unsupported => "Operation not supported",
+            ErrorKind::Parse => "Parse Error"
         };
         write!(f, "{message}")
     }
