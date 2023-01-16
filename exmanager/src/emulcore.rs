@@ -18,7 +18,7 @@ use uuid::Uuid;
 use dockhelper::DockerHelper;
 use crate::bwsync::{remove_flow, update_flows};
 use crate::data::{Application, ApplicationKind, ContainerConfig, Emulation, Flow};
-use crate::scheduler::EventScheduler;
+use crate::scheduler::schedule;
 
 
 #[derive(Clone)]
@@ -41,6 +41,10 @@ impl Handler<TCMessage> for FlowHandler {
 /// dispatched across the cluster. It is also responsible to follow the dynamic events associated
 /// with their associated nodes.
 pub struct EmulCore {
+    // By copying the applications in multiple places, we use a bit more memory but we achieve
+    // way faster searches across the structures
+    // There is no problem of cloning an app regarding mutability. An app itself do not allow
+    // to be mutable. It doesn't publish its internals and no permissions is given via calls.
     graph: Network<Application>,
     events: Option<Vec<EmulationEvent>>,
     my_apps: HashMap<Application, Option<UnixBinding<TCMessage, NoHandler>>>,
@@ -142,13 +146,13 @@ impl EmulCore {
             binding.connect().await?;
             // Send the TC Init
             let conf = TCConf::default(app.ip_addr());
-            binding.send(TCMessage::TCInit(conf));
+            binding.send(TCMessage::TCInit(conf)).await?;
             self.my_apps.insert(app, Some(binding));
         }
 
         // Now, all reporters are correctly connected and we are bind to all of these reporter
         // We can launch the event scheduler
-        EventScheduler::schedule(tc_messages_sender.clone(), self.events.take().unwrap());
+        schedule(tc_messages_sender.clone(), self.events.take().unwrap());
 
         // Everything is ready, we can now begin the main loop!
         // just before, telling the controller that we are ready to rock!
@@ -298,7 +302,7 @@ impl EmulCore {
                 (active_flows, bw_graph) = remove_flow(active_flows, &f, &self.graph);
             }
             // Tell the others that this flow does not exists anymore
-            self.broadcast_flow(&fc);
+            self.broadcast_flow(&fc).await;
         }
 
         (active_flows, bw_graph)

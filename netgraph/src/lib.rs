@@ -337,7 +337,7 @@ impl<T: Vertex> Network<T> {
     /// Calculate the properties between the paths, bandwidth, drop, (latency, jitter)
     pub fn properties_between(&self, from: &T, to: &T) -> Option<(u32, f32, (f32, f32))> {
         if let Some((from, to)) = self.map_two(from, to) {
-            let (val, path) = self.path_between(from);
+            let (_, path) = self.path_between(from);
             // check if a link exists
             if let None = path[to] {
                 return None;
