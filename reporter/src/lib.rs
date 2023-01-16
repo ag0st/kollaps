@@ -16,8 +16,8 @@ use redbpf::load::{Loaded, Loader};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
-use common::{FlowConf, ReporterConfig, TCMessage, ToU32IpAddr};
-use common::TCMessage::{FlowUpdate};
+use common::{FlowConf, ReporterConfig, EmulMessage, ToU32IpAddr};
+use common::EmulMessage::{FlowUpdate};
 use error::{Error, Result};
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
 
@@ -53,12 +53,12 @@ impl TCHandler {
 }
 
 #[async_trait]
-impl Handler<TCMessage> for TCHandler {
-    async fn handle(&mut self, bytes: BytesMut) -> Option<TCMessage> {
-        if let Ok(mess) = TCMessage::from_bytes(bytes) {
+impl Handler<EmulMessage> for TCHandler {
+    async fn handle(&mut self, bytes: BytesMut) -> Option<EmulMessage> {
+        if let Ok(mess) = EmulMessage::from_bytes(bytes) {
             match mess {
-                TCMessage::TCInit(conf) => self.manager.lock().ok()?.init(conf.dest.to_u32().unwrap()),
-                TCMessage::TCUpdate(conf) => {
+                EmulMessage::TCInit(conf) => self.manager.lock().ok()?.init(conf.dest.to_u32().unwrap()),
+                EmulMessage::TCUpdate(conf) => {
                     let manager = self.manager.lock().ok()?;
                     if self.initialized_path.lock().ok()?.contains(&conf.dest.to_u32().unwrap()) {
                         if let Some(bw) = conf.bandwidth_kbitps {
@@ -81,9 +81,9 @@ impl Handler<TCMessage> for TCHandler {
                         self.initialized_path.lock().ok()?.insert(conf.dest.to_u32().unwrap());
                     }
                 }
-                TCMessage::TCDisconnect => self.manager.lock().ok()?.disconnect(),
-                TCMessage::TCReconnect => self.manager.lock().ok()?.reconnect(),
-                TCMessage::TCTeardown => {
+                EmulMessage::TCDisconnect => self.manager.lock().ok()?.disconnect(),
+                EmulMessage::TCReconnect => self.manager.lock().ok()?.reconnect(),
+                EmulMessage::TCTeardown => {
                     // need to destroy the socket
                     self.clean_sender.send(()).await.unwrap();
                     self.manager.lock().ok()?.tear_down();
@@ -99,12 +99,12 @@ impl Handler<TCMessage> for TCHandler {
 
 struct Cleaner {
     receiver: mpsc::Receiver<()>,
-    listener: UnixBinding<TCMessage, TCHandler>,
+    listener: UnixBinding<EmulMessage, TCHandler>,
     ip: IpAddr,
 }
 
 impl Cleaner {
-    fn build(receiver: mpsc::Receiver<()>, listener: UnixBinding<TCMessage, TCHandler>, ip: IpAddr) -> Cleaner {
+    fn build(receiver: mpsc::Receiver<()>, listener: UnixBinding<EmulMessage, TCHandler>, ip: IpAddr) -> Cleaner {
         Cleaner {
             receiver,
             listener,
@@ -169,7 +169,7 @@ impl UsageAnalyzer {
         flow_socket_stream.connect().await.unwrap();
 
         // Send a message that our socket is ready for connection
-        flow_socket_stream.send(TCMessage::SocketReady).await.unwrap();
+        flow_socket_stream.send(EmulMessage::SocketReady).await.unwrap();
 
         self.listen_ebpf().await?;
         self.check_flows(flow_socket_stream).await?;
@@ -222,7 +222,7 @@ impl UsageAnalyzer {
 
     /// The check flow method is the main loop of the program.
     /// It reads the value into the self.usage and updates the main program via FlowSocket.
-    async fn check_flows(&self, mut stream: UnixBinding<TCMessage, Responder<TCMessage>>) -> Result<()> {
+    async fn check_flows(&self, mut stream: UnixBinding<EmulMessage, Responder<EmulMessage>>) -> Result<()> {
         println!("[REPORTER: {}] is ready, listening for flows changes", self.my_ip);
 
         // used to store the old values of the flows

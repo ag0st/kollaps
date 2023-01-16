@@ -26,6 +26,14 @@ pub struct ContainerConfig {
     image_command: Option<(String, Option<String>)>,
 }
 
+
+pub enum AppStatus {
+    NotInit,
+    Running,
+    Stopped,
+    Crashed
+}
+
 impl ContainerConfig {
     pub fn new(name: String, id: Option<String>, image_command: Option<(String, Option<String>)>) -> ContainerConfig {
         // check if image command not empty, that the image is a non empty String, or else it will crash.

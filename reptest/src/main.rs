@@ -5,7 +5,7 @@ use std::u32;
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use common::{Subnet, TCConf, TCMessage, ToU32IpAddr};
+use common::{Subnet, TCConf, EmulMessage, ToU32IpAddr};
 use dockhelper::DockerHelper;
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
 use async_trait::async_trait;
@@ -14,13 +14,13 @@ use bytes::BytesMut;
 
 #[derive(Clone)]
 struct FlowHandler {
-    sender: mpsc::Sender<TCMessage>,
+    sender: mpsc::Sender<EmulMessage>,
 }
 
 #[async_trait]
-impl Handler<TCMessage> for FlowHandler {
-    async fn handle(&mut self, bytes: BytesMut) -> Option<TCMessage> {
-        let mess = TCMessage::from_bytes(bytes).unwrap();
+impl Handler<EmulMessage> for FlowHandler {
+    async fn handle(&mut self, bytes: BytesMut) -> Option<EmulMessage> {
+        let mess = EmulMessage::from_bytes(bytes).unwrap();
         self.sender.send(mess).await.unwrap();
         None
     }
@@ -74,7 +74,7 @@ async fn main() {
 
 
     println!("Waiting for the reporter to be ready");
-    if let TCMessage::SocketReady = receiver.recv().await.unwrap() {
+    if let EmulMessage::SocketReady = receiver.recv().await.unwrap() {
         println!("Ready to continue!")
     } else {
         eprintln!("Received no good message, waiting for SocketReady");
@@ -84,7 +84,7 @@ async fn main() {
     }
 
     println!("Connection to the tc socket");
-    let mut binding: UnixBinding<TCMessage, Responder<TCMessage>> = Unix::bind_addr(tc_socket, None).await.unwrap();
+    let mut binding: UnixBinding<EmulMessage, Responder<EmulMessage>> = Unix::bind_addr(tc_socket, None).await.unwrap();
     binding.connect().await.unwrap();
     let conf = TCConf {
         dest: ip,
@@ -93,7 +93,7 @@ async fn main() {
         drop: None,
     };
     println!("init the TC");
-    binding.send(TCMessage::TCInit(conf)).await.unwrap();
+    binding.send(EmulMessage::TCInit(conf)).await.unwrap();
 
 
     loop {
@@ -121,7 +121,7 @@ async fn main() {
             "l" => {}
             "s" => {
                 println!("stopping");
-                binding.send(TCMessage::TCTeardown).await.unwrap();
+                binding.send(EmulMessage::TCTeardown).await.unwrap();
                 dock.stop_container("ebpf").await.unwrap();
                 dock.delete_network().await.unwrap();
                 break;
@@ -142,6 +142,6 @@ async fn main() {
 
         // send the command to the node
         println!("sending command to the reporter");
-        binding.send(TCMessage::TCUpdate(conf)).await.unwrap();
+        binding.send(EmulMessage::TCUpdate(conf)).await.unwrap();
     }
 }

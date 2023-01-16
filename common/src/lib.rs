@@ -1,3 +1,5 @@
+extern crate core;
+
 mod runner_config;
 mod error;
 mod subnet;
@@ -22,7 +24,7 @@ pub use error::ErrorProducer;
 pub use subnet::{Subnet, IpMask, ToSocketAddr};
 
 // Exporting tc messages for communication between main app en reporter
-pub use tc_message::{TCMessage, FlowConf, TCConf, EmulationEvent, EventAction};
+pub use tc_message::{EmulMessage, FlowConf, TCConf, EmulationEvent, EventAction, EmulMessageWrapper};
 
 // exporting the ClusterNodeInfo
 pub use cluster_node::ClusterNodeInfo;
