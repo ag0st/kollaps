@@ -1,8 +1,10 @@
 use std::{fs, ptr};
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,12 +17,12 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
 use common::{FlowConf, ReporterConfig, TCMessage, ToU32IpAddr};
-use common::TCMessage::{FlowNew, FlowRemove, FlowUpdate};
+use common::TCMessage::{FlowUpdate};
 use error::{Error, Result};
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
-use crate::data::MonitorIpAddr;
-use crate::data::Message;
 
+use crate::data::Message;
+use crate::data::MonitorIpAddr;
 use crate::tc_manager::TCManager;
 
 pub mod error;
@@ -98,20 +100,20 @@ impl Handler<TCMessage> for TCHandler {
 struct Cleaner {
     receiver: mpsc::Receiver<()>,
     listener: UnixBinding<TCMessage, TCHandler>,
-    id: u32,
+    ip: IpAddr,
 }
 
 impl Cleaner {
-    fn build(receiver: mpsc::Receiver<()>, listener: UnixBinding<TCMessage, TCHandler>, id: u32) -> Cleaner {
+    fn build(receiver: mpsc::Receiver<()>, listener: UnixBinding<TCMessage, TCHandler>, ip: IpAddr) -> Cleaner {
         Cleaner {
             receiver,
             listener,
-            id,
+            ip,
         }
     }
     async fn wait_to_clean(mut self) {
         self.receiver.recv().await;
-        println!("[REPORTER: {}] - Stopping and cleaning...", self.id);
+        println!("[REPORTER: {}] - Stopping and cleaning...", self.ip.to_string());
         // no really need to to it but it is just to show what we are doing.
         drop(self.listener)
     }
@@ -121,13 +123,17 @@ pub struct UsageAnalyzer {
     /// This field is an option because it allow to be taken by the listener process.
     usage: Arc<Map<u32, (u32, Instant)>>,
     config: ReporterConfig,
+    my_ip: IpAddr,
 }
 
 impl UsageAnalyzer {
     pub async fn build(config: &ReporterConfig) -> Result<UsageAnalyzer> {
+        // parse the ip addr
+        let my_ip = IpAddr::from_str(&*config.ip.clone()).unwrap();
         Ok(UsageAnalyzer {
             usage: Arc::new(Map::new()),
             config: config.clone(),
+            my_ip
         })
     }
 
@@ -143,7 +149,7 @@ impl UsageAnalyzer {
 
         // Create the cleaner, it will hold the socket and drop it (deleting it) when receiving Teardown
         // event through the tc_command_socket.
-        let cleaner = Cleaner::build(receiver, tc_command_binding, self.config.id);
+        let cleaner = Cleaner::build(receiver, tc_command_binding, self.my_ip);
         // launch the cleaner in another thread, it will just wait
         tokio::spawn(async move { cleaner.wait_to_clean().await });
 
@@ -217,7 +223,7 @@ impl UsageAnalyzer {
     /// The check flow method is the main loop of the program.
     /// It reads the value into the self.usage and updates the main program via FlowSocket.
     async fn check_flows(&self, mut stream: UnixBinding<TCMessage, Responder<TCMessage>>) -> Result<()> {
-        println!("[REPORTER: {}] is ready, listening for flows changes", self.config.id);
+        println!("[REPORTER: {}] is ready, listening for flows changes", self.my_ip);
 
         // used to store the old values of the flows
         let mut old_values: HashMap<u32, u32> = HashMap::new();
@@ -240,26 +246,23 @@ impl UsageAnalyzer {
                     // Add it into the to_remove and remove after to not create dead lock
                     to_remove.push(entry.key().clone());
                     // Send the information to the emulation
-                    stream.send(FlowRemove(FlowConf::build(self.config.id, dest.to_ip_addr(), None))).await.unwrap();
+                    stream.send(FlowUpdate(FlowConf::build(self.my_ip, dest.to_ip_addr(), None))).await.unwrap();
                     continue;
                 } else { // updated recently, check if update regarding old value or a new flow
-                    if !old_values.contains_key(entry.key()) {
-                        let dest = MonitorIpAddr::new(entry.key().clone());
-                        old_values.insert(*entry.key(), entry.val().0);
-                        // Send the information to the emulation
-                        stream.send(FlowNew(FlowConf::build(self.config.id, dest.to_ip_addr(), Some(entry.val().0)))).await.unwrap();
-                    } else { // This is not a new value! check if it enters in our tolerance
+                    let dest = MonitorIpAddr::new(entry.key().clone());
+                    let mut percentage_variation = 100.0;
+                    if old_values.contains_key(entry.key()) { // This is not a new value! check if it enters in our tolerance
                         // Check the percentage variation, only care if the variation stay within the 5%
                         let old = old_values.get(entry.key()).unwrap().clone() as f32;
                         let new = entry.val().0 as f32;
-
-                        let percentage_variation = (old - new).abs() / old * 100f32;
-                        if percentage_variation > self.config.percentage_variation {
-                            let dest = MonitorIpAddr::new(entry.key().clone());
-                            old_values.insert(entry.key().clone(), entry.val().0.clone());
-                            // Send the information to the emulation
-                            stream.send(FlowUpdate(FlowConf::build(self.config.id, dest.to_ip_addr(), Some(entry.val().0)))).await.unwrap();
-                        }
+                        percentage_variation = (old - new).abs() / old * 100f32;
+                    }
+                    // Check if it is an enough good variation to notify the other app,
+                    // new flows will have by default 100% variation
+                    if percentage_variation >= self.config.percentage_variation {
+                        old_values.insert(entry.key().clone(), entry.val().0.clone());
+                        // Send the information to the emulation
+                        stream.send(FlowUpdate(FlowConf::build(self.my_ip, dest.to_ip_addr(), Some(entry.val().0)))).await.unwrap();
                     }
                 }
             }

@@ -42,15 +42,15 @@ impl TCConf {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FlowConf {
-    pub src: u32,
+    pub src: IpAddr,
     pub dest: IpAddr,
     pub throughput: Option<u32>,
 }
 
 impl FlowConf {
-    pub fn build(src: u32, dest: IpAddr, throughput: Option<u32>) -> FlowConf {
+    pub fn build(src: IpAddr, dest: IpAddr, throughput: Option<u32>) -> FlowConf {
         FlowConf {
             src,
             dest,
@@ -61,9 +61,7 @@ impl FlowConf {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TCMessage {
-    FlowNew(FlowConf),
     FlowUpdate(FlowConf),
-    FlowRemove(FlowConf),
     TCInit(TCConf),
     TCUpdate(TCConf),
     TCDisconnect,
@@ -114,20 +112,10 @@ impl TCMessage {
 
     pub fn opcode_2_event(opcode: u16, data: Option<String>) -> Result<TCMessage> {
         match opcode {
-            0x0000 if data.is_some() => {
-                let data = data.as_deref().unwrap_or("");
-                let fl_conf = deserialize::<FlowConf>(data)?;
-                Ok(TCMessage::FlowNew(fl_conf))
-            }
             0x0001 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
                 let fl_conf = deserialize::<FlowConf>(data)?;
                 Ok(TCMessage::FlowUpdate(fl_conf))
-            }
-            0x0002 if data.is_some() => {
-                let data = data.as_deref().unwrap_or("");
-                let fl_conf = deserialize::<FlowConf>(data)?;
-                Ok(TCMessage::FlowRemove(fl_conf))
             }
             0x0003 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
@@ -154,9 +142,7 @@ impl TCMessage {
 
     pub fn event_2_opcode(com: &TCMessage) -> u16 {
         match com {
-            TCMessage::FlowNew(_) => 0x0000,
             TCMessage::FlowUpdate(_) => 0x0001,
-            TCMessage::FlowRemove(_) => 0x0002,
             TCMessage::TCInit(_) => 0x0003,
             TCMessage::TCUpdate(_) => 0x0004,
             TCMessage::TCDisconnect => 0x0005,
@@ -173,9 +159,7 @@ impl ToBytesSerialize for TCMessage {
         let mut buf = BytesMut::new();
         buf.put_u16(TCMessage::event_2_opcode(self));
         match self {
-            TCMessage::FlowNew(a) => buf.put_slice(serialize(a).as_slice()),
             TCMessage::FlowUpdate(a) => buf.put_slice(serialize(a).as_slice()),
-            TCMessage::FlowRemove(a) => buf.put_slice(serialize(a).as_slice()),
             TCMessage::TCInit(a) => buf.put_slice(serialize(a).as_slice()),
             TCMessage::TCUpdate(a) => buf.put_slice(serialize(a).as_slice()),
             _ => {}
@@ -187,9 +171,7 @@ impl ToBytesSerialize for TCMessage {
 impl Display for TCMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            TCMessage::FlowNew(_) => write!(f, "FlowNew"),
             TCMessage::FlowUpdate(_) => write!(f, "FlowUpdate"),
-            TCMessage::FlowRemove(_) => write!(f, "FlowRemove"),
             TCMessage::TCInit(_) => write!(f, "TCInit"),
             TCMessage::TCUpdate(_) => write!(f, "TCUpdate"),
             TCMessage::TCDisconnect => write!(f, "TCDisconnect"),

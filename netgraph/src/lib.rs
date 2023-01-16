@@ -54,9 +54,9 @@ pub struct Link<T> {
     internal_destination: usize,
     pub source: T,
     pub destination: T,
-    pub bandwidth: usize,
+    pub bandwidth: u32,
     pub drop: f32,
-    pub latency: f32,
+    pub latency_jitter: (f32, f32),
     pub duplex: Duplex,
 }
 
@@ -68,7 +68,7 @@ impl<T: Vertex> Clone for Link<T> {
             source: self.source.clone(),
             destination: self.destination.clone(),
             bandwidth: self.bandwidth,
-            latency: self.latency,
+            latency_jitter: self.latency_jitter,
             drop: self.drop,
             duplex: self.duplex,
         }
@@ -119,14 +119,14 @@ impl<T: Vertex> Ord for Link<T> {
 }
 
 impl<T: Vertex> Link<T> {
-    fn build(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: usize) -> Link<T> {
+    fn build(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: u32) -> Link<T> {
         Link {
             internal_source,
             internal_destination,
             source,
             destination,
             bandwidth,
-            latency: 0f32,
+            latency_jitter: (0f32, 0f32),
             drop: 0f32,
             duplex: Duplex::FullDuplex,
         }
@@ -136,7 +136,7 @@ impl<T: Vertex> Link<T> {
         self.duplex = duplex;
     }
 
-    pub fn bandwidth(&self) -> usize {
+    pub fn bandwidth(&self) -> u32 {
         match self.duplex {
             Duplex::FullDuplex => self.bandwidth,
             Duplex::HalfDuplex => self.bandwidth / 2,
@@ -160,13 +160,13 @@ pub struct Network<T: Eq + Hash> {
     mapper: HashMap<T, usize>,
     path_strategy: PathStrategy,
     #[serde(skip, default = "default_cache")]
-    shortest_path_cache: RefCell<HashMap<usize, (Vec<Option<usize>>, Vec<Option<usize>>)>>,
+    shortest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
     #[serde(skip, default = "default_cache")]
-    widest_path_cache: RefCell<HashMap<usize, (Vec<Option<usize>>, Vec<Option<usize>>)>>,
+    widest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
 }
 
 /// Functions for deserialization
-fn default_cache() -> RefCell<HashMap<usize, (Vec<Option<usize>>, Vec<Option<usize>>)>> {
+fn default_cache() -> RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>> {
     RefCell::new(HashMap::new())
 }
 
@@ -225,7 +225,7 @@ impl<T: Vertex> Network<T> {
                 panic!("cannot insert a node already existing inside the visited_nodes");
             }
             // create a speed
-            let edge_speed = rng.gen_range(0..diff_speeds);
+            let edge_speed = rng.gen_range(0..diff_speeds) as u32;
             net.add_edge(&v, &a, edge_speed);
         }
 
@@ -243,7 +243,7 @@ impl<T: Vertex> Network<T> {
                 // generate an edge speed
                 let edge_speed = rng.gen_range(0..diff_speeds);
                 speeds[current_node] = edge_speed;
-                net.add_edge(&v, &current_node, edge_speed);
+                net.add_edge(&v, &current_node, edge_speed as u32);
             }
             remaining_terminal -= to_place;
         }
@@ -278,7 +278,7 @@ impl<T: Vertex> Network<T> {
         self.mapper.keys().map(|k| k.clone()).collect::<HashSet<T>>()
     }
 
-    pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: usize) {
+    pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: u32) {
         if let Some((from_inter, to_inter)) = self.map_two(from, to) {
             self.links[(from_inter, to_inter)] = Some(Link::build(from.clone(), to.clone(), from_inter, to_inter, bandwidth));
             // invalidate shortest / widest paths cache!
@@ -287,14 +287,14 @@ impl<T: Vertex> Network<T> {
     }
 
     /// Exported method of the update_bandwidth_inter
-    pub fn update_bandwidth(&mut self, from: &T, to: &T, bandwidth: usize) {
+    pub fn update_bandwidth(&mut self, from: &T, to: &T, bandwidth: u32) {
         if let Some((from, to)) = self.map_two(from, to) {
             self.update_bandwidth_inter(from, to, bandwidth);
         }
     }
 
     /// Update the bandwidth of a link represented by the source and destination
-    fn update_bandwidth_inter(&mut self, from: usize, to: usize, bandwidth: usize) {
+    fn update_bandwidth_inter(&mut self, from: usize, to: usize, bandwidth: u32) {
         if let Some(link) = self.links[(from, to)].borrow_mut() {
             link.bandwidth = bandwidth;
             self.clear_path_caches();
@@ -308,7 +308,7 @@ impl<T: Vertex> Network<T> {
 
     /// Get the bandwidth between two nodes. Uses the strategy defined to find the path,
     /// and then compute the bandwidth between the two nodes along the path.
-    pub fn bandwidth_between(&self, from: &T, to: &T) -> Option<usize> {
+    pub fn bandwidth_between(&self, from: &T, to: &T) -> Option<u32> {
         if let Some((from, to)) = self.map_two(from, to) {
             let (val, path) = self.path_between(from);
             // if the strategy is widest path, the "val" contains already the bandwidth between
@@ -323,7 +323,7 @@ impl<T: Vertex> Network<T> {
             }
 
             let mut dest = to;
-            let mut speed = usize::MAX;
+            let mut speed = u32::MAX;
             while let Some(parent) = path[dest] {
                 speed = min(speed, self.links[(dest, parent)].as_ref().unwrap().bandwidth());
                 dest = parent;
@@ -334,9 +334,35 @@ impl<T: Vertex> Network<T> {
         }
     }
 
+    /// Calculate the properties between the paths, bandwidth, drop, (latency, jitter)
+    pub fn properties_between(&self, from: &T, to: &T) -> Option<(u32, f32, (f32, f32))> {
+        if let Some((from, to)) = self.map_two(from, to) {
+            let (val, path) = self.path_between(from);
+            // check if a link exists
+            if let None = path[to] {
+                return None;
+            }
+
+            let mut dest = to;
+            let mut bandwidth = u32::MAX;
+            let mut drop = 0f32;
+            let mut latency_jitter = (0f32, 0f32);
+            while let Some(parent) = path[dest] {
+                let link = self.links[(dest, parent)].as_ref().unwrap();
+                bandwidth = min(bandwidth, link.bandwidth());
+                drop = drop + link.drop;
+                latency_jitter = (latency_jitter.0 + link.latency_jitter.0, latency_jitter.1 + link.latency_jitter.1);
+                dest = parent;
+            }
+            Some((bandwidth, drop, latency_jitter))
+        } else {
+            None
+        }
+    }
+
     /// Update the bandwidth along a path between two nodes by applying the function given in parameter.
     /// The function "func" is Fn(old_bandwidth) -> new_bandwidth
-    pub fn update_edges_along_path_by(&mut self, from: &T, to: &T, func: impl Fn(usize) -> usize) {
+    pub fn update_edges_along_path_by(&mut self, from: &T, to: &T, func: impl Fn(u32) -> u32) {
         if let Some((from, to)) = self.map_two(from, to) {
             let (_, path) = self.path_between(from);
             let mut last_child = to;
@@ -377,7 +403,7 @@ impl<T: Vertex> Network<T> {
     /// Get the path between a node to the other nodes in the graph regarding the Network strategy.
     /// In the case of Shortest Path, it applies Dijkstra's algorithm and gives (dist, parents).
     /// In the case of Widest Path, it gives (bandwidth, parents)
-    fn path_between(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+    fn path_between(&self, from: usize) -> (Vec<Option<u32>>, Vec<Option<usize>>) {
         match self.path_strategy {
             PathStrategy::WidestPath => {
                 let mut cache = self.widest_path_cache.borrow_mut();
@@ -403,7 +429,7 @@ impl<T: Vertex> Network<T> {
     }
 
     /// Calculate the shortest path to all other nodes, gives back a parents vector.
-    fn shortest_path(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+    fn shortest_path(&self, from: usize) -> (Vec<Option<u32>>, Vec<Option<usize>>) {
         let mut dist = vec![None; self.links.size()];
         dist[from] = Some(0);
 
@@ -456,15 +482,15 @@ impl<T: Vertex> Network<T> {
     /// The widest path is the path containing the most bandwidth.
     /// returns a vector containing the maximal bandwidth with the other nodes and secondly
     /// a vector containing the parent chaining to achieve this path.
-    fn widest_path(&self, from: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+    fn widest_path(&self, from: usize) -> (Vec<Option<u32>>, Vec<Option<usize>>) {
         let mut bandwidths: Vec<_> = (0..self.links.size()).map(|_| None).collect();
         let mut parents: Vec<Option<usize>> = (0..self.links.size()).map(|_| None).collect();
         let mut to_visit: BinaryHeap<Pair> = BinaryHeap::new();
 
-        bandwidths[from] = Some(usize::MAX);
+        bandwidths[from] = Some(u32::MAX);
         to_visit.push(Pair {
             node: from,
-            val: usize::MAX,
+            val: u32::MAX,
         });
 
         while let Some(Pair { node: current_src, val: bandwidth }) = to_visit.pop() {
@@ -493,7 +519,7 @@ impl<T: Vertex> Network<T> {
                 if bandwidths[n] == None || current_bandwidth > bandwidths[n].unwrap() {
                     bandwidths[n] = Some(current_bandwidth);
                     parents[n] = Some(current_src);
-                    to_visit.push(Pair { node: n, val: current_bandwidth as usize })
+                    to_visit.push(Pair { node: n, val: current_bandwidth })
                 }
             }
         }
@@ -539,7 +565,7 @@ impl<T: Vertex> Network<T> {
 #[derive(Copy, Clone, Eq, PartialEq)]
 struct Pair {
     node: usize,
-    val: usize,
+    val: u32,
 }
 
 // The priority queue depends on `Ord`.

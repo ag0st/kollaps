@@ -1,15 +1,12 @@
 use std::borrow::Borrow;
-use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr};
-use std::ptr::eq;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, Error, ErrorKind, Result};
+use common::{ClusterNodeInfo, EmulationEvent, Error, ErrorKind};
 use netgraph::Network;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -167,7 +164,7 @@ impl Hash for Application {
 #[derive(Serialize, Deserialize)]
 pub struct Emulation {
     uuid: String,
-    pub graph: netgraph::Network<Application>,
+    pub graph: Network<Application>,
     pub events: Vec<EmulationEvent>,
 }
 
@@ -203,39 +200,39 @@ fn parse_uuid_or_crash(uuid: String) -> Uuid {
 /// and do not change in the time contrary to the bandwidth, which changes regarding the actual use
 /// of the emulated network.
 #[derive(Eq, Clone, Copy)]
-pub struct Flow<T: netgraph::Vertex> {
-    pub source: T,
-    pub destination: T,
-    bandwidth: usize,
-    pub target_bandwidth: usize,
+pub struct Flow<'a, T: netgraph::Vertex> {
+    pub source: &'a T,
+    pub destination: &'a T,
+    pub bandwidth: u32,
+    pub target_bandwidth: u32,
 }
 
-impl<T: netgraph::Vertex> PartialEq for Flow<T> {
+impl<'a, T: netgraph::Vertex> PartialEq for Flow<'a, T> {
     fn eq(&self, other: &Self) -> bool {
         self.source == other.source && self.destination == other.destination
     }
 }
 
-impl<T: netgraph::Vertex> Hash for Flow<T> {
+impl<'a, T: netgraph::Vertex> Hash for Flow<'a, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (self.source.clone(), self.destination.clone()).hash(state)
     }
 }
 
-impl<T: netgraph::Vertex> Display for Flow<T> {
+impl<'a, T: netgraph::Vertex> Display for Flow<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.bandwidth, self.target_bandwidth)
     }
 }
 
-impl<T: netgraph::Vertex> Debug for Flow<T> {
+impl<'a, T: netgraph::Vertex> Debug for Flow<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self, f)
     }
 }
 
-impl<T: netgraph::Vertex> Flow<T> {
-    pub fn build(source: T, destination: T, bandwidth: usize, target_bandwidth: usize) -> Flow<T> {
+impl<'a, T: netgraph::Vertex> Flow<'a, T> {
+    pub fn build(source: &'a T, destination: &'a T, bandwidth: u32, target_bandwidth: u32) -> Flow<'a, T> {
         Flow { source, destination, bandwidth, target_bandwidth }
     }
 }

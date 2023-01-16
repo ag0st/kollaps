@@ -87,7 +87,7 @@ async fn main() {
         }
 
         if let Command::ACTIVATE = command {
-            if let Ok(bandwidth) = usize::from_str(iter.next().unwrap()) {
+            if let Ok(bandwidth) = u32::from_str(iter.next().unwrap()) {
                 flow.target_bandwidth = bandwidth;
             } else {
                 eprintln!("Cannot parse the destination.");

@@ -1,5 +1,5 @@
-use std::sync::mpsc;
 use std::thread::sleep;
+use tokio::sync::mpsc;
 use common::{TCMessage, EmulationEvent};
 
 pub struct EventScheduler {
@@ -12,7 +12,7 @@ impl EventScheduler {
             let sender = event_sender.clone();
             tokio::spawn(async move {
                 sleep(event.time);
-                sender.send(TCMessage::Event(event))
+                sender.send(TCMessage::Event(event)).await.unwrap()
             });
         }
     }

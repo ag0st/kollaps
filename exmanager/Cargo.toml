@@ -10,6 +10,7 @@ netgraph = { path = "../netgraph" }
 nethelper = { path = "../nethelper" }
 common = { path = "../common" }
 dockhelper = { path = "../dockhelper" }
+bwsync = { path= "../bwsync" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0.136", features = ["derive"] }
 uuid = { version = "1.2.2", features = ["v4", "fast-rng", "macro-diagnostics"] }

@@ -10,6 +10,6 @@ async fn main() {
 
     let mut usage_analyzer = UsageAnalyzer::build(&config).await.unwrap();
     if let Err(e) = usage_analyzer.start().await {
-        eprintln!("[REPORTER: {}]: Cannot be started because of: {:?}", config.id, e)
+        eprintln!("[REPORTER: {}]: Cannot be started because of: {:?}", config.ip, e)
     }
 }

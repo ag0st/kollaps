@@ -12,8 +12,8 @@ pub struct ReporterConfig {
     /// The socket used by the caller to send Traffic Control commands
     pub tc_socket: String,
     #[clap(long)]
-    /// The id of the software. It is used to know which instance send info on the flow socket.
-    pub id: u32,
+    /// The ip of the software it is monitoring
+    pub ip: String,
     #[clap(default_value_t=5f32, short, long)]
     /// Percentage variation used to determine if a flow has changed or not.
     pub percentage_variation: f32,
