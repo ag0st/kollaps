@@ -120,6 +120,10 @@ impl Application {
     pub fn name(&self) -> String {
         self.name.clone()
     }
+    
+    pub fn set_host(&mut self, host: ClusterNodeInfo) {
+        self.host = Some(host);
+    }
 }
 
 
@@ -149,6 +153,14 @@ impl Node {
             Node::Bridge(_) => panic!("Trying to get the app from a bridge")
         }
     }
+    
+    pub fn as_app_mut(&mut self) -> &mut Application {
+        match self {
+            Node::App(_, app) => app,
+            Node::Bridge(_) => panic!("Trying to get the app from a bridge")
+        }
+    }
+    
     pub fn is_same_by_id(&self, id: u32) -> bool {
         match self {
             Node::App(my_id, _) => id.eq(my_id),
@@ -196,9 +208,9 @@ impl Hash for Node {
 
 /// Represent an emulation
 #[derive(Serialize, Deserialize)]
-pub struct Emulation {
+pub struct Emulation<'a> {
     uuid: String,
-    pub graph: Network<Node>,
+    pub graph: Network<'a, Node>,
     pub events: Vec<EmulationEvent>,
 }
 

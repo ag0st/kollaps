@@ -1,11 +1,15 @@
 use std::cmp::min;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use common::{Error, ErrorKind, ErrorProducer, Result};
 
 use serde::{Deserialize, Serialize};
 
 use matrix::SymMatrix;
+
+mod message;
+
+pub use message::CGraphUpdate;
 
 // is_limited : bool, is_direct_tested: bool, speed: usize
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
@@ -114,11 +118,7 @@ impl<I: Clone + Eq> CGraph<I> {
                 best_average = current_average;
             }
         }
-        let best_leader = self.nodes.iter()
-            .filter(|n| n.index == best_index)
-            .take(1)
-            .last()
-            .unwrap().clone();
+        let best_leader = self.node_by_index(best_index);
         Ok(best_leader)
     }
 
@@ -223,10 +223,21 @@ impl<I: Clone + Eq> CGraph<I> {
         Ok(useful)
     }
 
-    pub fn speeds(&self) -> SymMatrix<usize> {
-        SymMatrix::new_fn(self.nodes.len(), |row, col| {
-            self.c_graph[(row, col)].speed().clone()
-        })
+    fn node_by_index(&self, index: usize) -> Node<I> {
+        self.nodes.iter()
+            .filter(|n| n.index == index)
+            .take(1)
+            .last()
+            .unwrap().clone()
+    }
+    
+    pub fn speeds(&self) -> (SymMatrix<u32>, Vec<I>) where I: Hash {
+        let matrix = SymMatrix::new_fn(self.nodes.len(), |row, col| {
+            // Todo change the whole implementation to use u32 instead of usize for bandwidth
+            self.c_graph[(row, col)].speed().clone() as u32
+        });
+        let map = (0..matrix.size()).map(|index| self.node_by_index(index)).collect();
+        (matrix, map)
     }
 
     // returns from and to

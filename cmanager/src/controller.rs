@@ -8,7 +8,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
+use cgraph::CGraphUpdate;
 
 use common::{ClusterNodeInfo, Error, ErrorKind, Result};
 use common::RunnerConfig;
@@ -37,7 +39,7 @@ impl Handler<Event> for EventHandler {
 }
 
 impl EventHandler {
-    pub fn new(sender: mpsc::Sender<EventMessage>) -> EventHandler {
+    pub fn new(sender: Sender<EventMessage>) -> EventHandler {
         EventHandler { sender }
     }
 }
@@ -62,7 +64,7 @@ impl Handler<Event> for HeartBeatHandler {
 }
 
 impl HeartBeatHandler {
-    pub fn new(sender: mpsc::Sender<ClusterNodeInfo>) -> HeartBeatHandler {
+    pub fn new(sender: Sender<ClusterNodeInfo>) -> HeartBeatHandler {
         HeartBeatHandler { sender }
     }
 }
@@ -82,7 +84,7 @@ impl Display for EventMessage {
 
 pub struct Ctrl {
     events_receiver: mpsc::Receiver<EventMessage>,
-    event_sender: mpsc::Sender<EventMessage>,
+    event_sender: Sender<EventMessage>,
     cgraph: WCGraph,
     my_info: ClusterNodeInfo,
     my_speed: usize,
@@ -160,7 +162,7 @@ impl Ctrl {
         }
     }
 
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self, cgraph_update: Sender<CGraphUpdate>) -> Result<()> {
         println!("Starting the controller...");
 
         // store the number of retry for joining a cluster
@@ -173,6 +175,8 @@ impl Ctrl {
             self.send_cluster_joining_request().await?;
         } else {
             self.create_cluster()?;
+            // notify the cgraph update that there is a new cgraph
+            let _ = cgraph_update.send(CGraphUpdate::New(self.cgraph.graph())).await;
         }
 
         while let Some(event) = self.events_receiver.recv().await {
@@ -188,6 +192,7 @@ impl Ctrl {
                     // The event CGraphUpdate is the last to receive after adding a node,
                     // we are not currently adding a new node.
                     self.adding_new_node = false;
+                    // Todo: Leader changes: it will not go through this because there is no more leader changes
                     if graph.is_empty() { // means we are not the leader anymore
                         println!("[CGRAPH UPDATE]: I am not the leader anymore, stopping heartbeat check...");
                         self.is_leader = false;
@@ -197,13 +202,20 @@ impl Ctrl {
 
                         let was_leader = self.is_leader;
                         self.cgraph = graph;
-                        self.update_is_leader();
+                        
+                        // Todo: Leader changes: Reactive it if you want leader changes
+                        // self.update_is_leader();
 
+                        // Todo: Leader changes: it will not go through this because there is no more leader changes
                         // if I am the leader, begin to send HeartBeat if I wasn't
                         if self.is_leader && !was_leader {
                             println!("[CGRAPH UPDATE]: I am a new leader, starting heartbeat check...");
                             self.send_event_after(Duration::from_secs(1), Event::CHeartbeatCheck);
                         }
+                        
+                        // Send the update of the cgraph
+                        // we do not care if we succeeded to send the update, this is not our problem.
+                        let _ = cgraph_update.send(CGraphUpdate::New(self.cgraph.graph())).await;
                     }
                     // nothing to send back
                     sender.send(None).unwrap();
@@ -292,6 +304,8 @@ impl Ctrl {
                     } else {
                         println!("[CJQ RETRY]: No more retries, create my own cluster");
                         self.create_cluster()?;
+                        // notify that there is a new cluster
+                        let _ = cgraph_update.send(CGraphUpdate::New(self.cgraph.graph())).await;
                     }
                 }
                 EventMessage { event: Event::CHeartbeat((_, other)), sender: Some(sender) } => {
@@ -321,6 +335,9 @@ impl Ctrl {
                                 eprintln!("[NODE FAILURE]: Issue removing a node from the CGraph");
                             }
                             self.heartbeat_misses.remove(&info).unwrap();
+                            
+                            // Notify that the CGraph has changed
+                            let _ = cgraph_update.send(CGraphUpdate::Remove(info.clone())).await;
                         } else {
                             // increment the number of missed heartbeats, must be present, so unwrap
                             self.heartbeat_misses.insert(info, missed_heartbeat + 1).unwrap();
@@ -539,36 +556,38 @@ impl Ctrl {
                     .await?;
                 println!("[CLUSTER ADD]: Completion of the graph finished");
                 // Now we made the tests with all the others, check if we are the leader
-                self.update_is_leader();
+                Ok(Event::CGraphUpdate(self.cgraph.clone()))
+                // Todo: Leader changes: Reactivate the lines bellow for leader changes and deactivate the line above
+                // self.update_is_leader();
                 // 3 cases scenarios now:
                 // 1. The old leader still the leader
                 // 2. We are the new leader
                 // 3. Another node became the new leader
-                let current_leader = self.cgraph.find_leader()?;
-                if current_leader.info().eq(&leader_info.clone()) {
-                    println!("[CLUSTER ADD]: The old leader still the leader");
-                    self.is_leader = false;
-                    // The old leader stay the leader, send him update of the cgraph
-                    Ok(Event::CGraphUpdate(self.cgraph.clone()))
-                } else if current_leader.info().eq(&self.my_info.clone()) {
-                    println!("[CLUSTER ADD]: I am the new leader");
-                    // I am the new leader, send him update with empty cgraph
-                    self.is_leader = true;
-                    Ok(Event::CGraphUpdate(WCGraph::new()))
-                } else {
-                    println!("[CLUSTER ADD]: The new leader is {}", current_leader.info());
-                    self.is_leader = false;
-                    // Inform the new leader that he is the new leader by sending him
-                    // a complete CGraph
-                    let mut binding: TCPBinding<Event, Responder<Event>> = TCP::bind(None)
-                        .await?;
-                    binding.send_to(
-                        Event::CGraphUpdate(self.cgraph.clone()),
-                        current_leader.info())
-                        .await?;
-                    // Another person is leader, send to the leader empty cgraph
-                    Ok(Event::CGraphUpdate(WCGraph::new()))
-                }
+                // let current_leader = self.cgraph.find_leader()?;
+                // if current_leader.info().eq(&leader_info.clone()) {
+                //     println!("[CLUSTER ADD]: The old leader still the leader");
+                //     self.is_leader = false;
+                //     // The old leader stay the leader, send him update of the cgraph
+                //     Ok(Event::CGraphUpdate(self.cgraph.clone()))
+                // } else if current_leader.info().eq(&self.my_info.clone()) {
+                //     println!("[CLUSTER ADD]: I am the new leader");
+                //     // I am the new leader, send him update with empty cgraph
+                //     self.is_leader = true;
+                //     Ok(Event::CGraphUpdate(WCGraph::new()))
+                // } else {
+                //     println!("[CLUSTER ADD]: The new leader is {}", current_leader.info());
+                //     self.is_leader = false;
+                //     // Inform the new leader that he is the new leader by sending him
+                //     // a complete CGraph
+                //     let mut binding: TCPBinding<Event, Responder<Event>> = TCP::bind(None)
+                //         .await?;
+                //     binding.send_to(
+                //         Event::CGraphUpdate(self.cgraph.clone()),
+                //         current_leader.info())
+                //         .await?;
+                //     // Another person is leader, send to the leader empty cgraph
+                //     Ok(Event::CGraphUpdate(WCGraph::new()))
+                // }
             }
             Err(e) => {
                 Err(Error::wrap("cluster add",

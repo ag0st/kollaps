@@ -39,6 +39,10 @@ impl WCGraph {
     pub fn new() -> WCGraph {
         WCGraph(CGraph::new())
     }
+    
+    pub fn graph(&self) -> CGraph<ClusterNodeInfo> {
+        self.0.clone()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

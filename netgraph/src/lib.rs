@@ -16,12 +16,12 @@ pub trait Vertex: Eq + Hash + Clone + Display + Serialize + for<'a> Deserialize<
 impl<T: Eq + Hash + Clone + Display + Serialize + for<'a> Deserialize<'a>> Vertex for T {}
 
 #[derive(Clone)]
-pub struct Path<T: Vertex> {
-    _links: Vec<Link<T>>,
-    links_set: HashSet<Link<T>>,
+pub struct Path<'a, T: Vertex> {
+    _links: Vec<Link<'a, T>>,
+    links_set: HashSet<Link<'a, T>>,
 }
 
-impl<T: Vertex> Path<T> {
+impl<'a, T: Vertex> Path<'a, T> {
     pub fn new() -> Path<T> {
         Path {
             _links: Vec::new(),
@@ -44,7 +44,7 @@ pub enum Duplex {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Link<T> {
+pub struct Link<'a, T> {
     /// Internal source and destination store the index
     /// in the graph where point source, resp. destination.
     /// It is use then to be able to produce the same hash for two links with permuted (source, destination)
@@ -52,15 +52,15 @@ pub struct Link<T> {
     /// We could have ask to implement Ord for T but it does not make sense for the user of the lib.
     internal_source: usize,
     internal_destination: usize,
-    pub source: T,
-    pub destination: T,
+    pub source: &'a T,
+    pub destination: &'a T,
     pub bandwidth: u32,
     pub drop: f32,
     pub latency_jitter: (f32, f32),
     pub duplex: Duplex,
 }
 
-impl<T: Vertex> Clone for Link<T> {
+impl<'a, T: Vertex> Clone for Link<'a, T> {
     fn clone(&self) -> Self {
         Self {
             internal_source: self.internal_source.clone(),
@@ -76,19 +76,19 @@ impl<T: Vertex> Clone for Link<T> {
 }
 
 // For now, bidirectional edges
-impl<T: Vertex> PartialEq for Link<T> {
+impl<'a, T: Vertex> PartialEq for Link<'a, T> {
     fn eq(&self, other: &Self) -> bool {
         (self.source == other.source && self.destination == other.destination) ||
             (self.destination == other.source && self.source == other.destination)
     }
 }
 
-impl<T: Vertex> Eq for Link<T> {}
+impl<'a, T: Vertex> Eq for Link<'a,T> {}
 
 /// The Hash of a link is consistent. It means that for two links A, B
 /// if (A.source = B.destination and A.destination = B.source) or (A.source = B.source and A.destination = B.destination) then,
 /// the hash will be the same for A and B.
-impl<T: Vertex> Hash for Link<T> {
+impl<'a, T: Vertex> Hash for Link<'a, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let mut src = self.internal_source;
         let mut dest = self.internal_destination;
@@ -100,7 +100,7 @@ impl<T: Vertex> Hash for Link<T> {
 }
 
 /// A link is ordered regarding its speed.
-impl<T: Vertex> PartialOrd for Link<T> {
+impl<'a, T: Vertex> PartialOrd for Link<'a, T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.bandwidth() < other.bandwidth() {
             Some(Ordering::Less)
@@ -112,14 +112,14 @@ impl<T: Vertex> PartialOrd for Link<T> {
     }
 }
 
-impl<T: Vertex> Ord for Link<T> {
+impl<'a, T: Vertex> Ord for Link<'a, T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(other).unwrap()
     }
 }
 
-impl<T: Vertex> Link<T> {
-    fn build(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: u32) -> Link<T> {
+impl<'a, T: Vertex> Link<'a, T> {
+    fn build(source: &'a T, destination: &'a T, internal_source: usize, internal_destination: usize, bandwidth: u32) -> Link<T> {
         Link {
             internal_source,
             internal_destination,
@@ -131,7 +131,7 @@ impl<T: Vertex> Link<T> {
             duplex: Duplex::FullDuplex,
         }
     }
-    fn build_all(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) -> Link<T> {
+    fn build_all(source: &'a T, destination: &'a T, internal_source: usize, internal_destination: usize, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) -> Link<T> {
         Link {
             internal_source,
             internal_destination,
@@ -167,8 +167,8 @@ pub enum PathStrategy {
 /// This structure offers multiple method and path strategy that helps working with the network.
 /// Be aware that this structure manage caches for path finding and because of this, it is not safe
 /// to make concurrent requests on a same instance. You need to protect it with a mutex.
-pub struct Network<T: Eq + Hash> {
-    links: SymMatrix<Option<Link<T>>>,
+pub struct Network<'a, T: Eq + Hash> {
+    links: SymMatrix<Option<Link<'a, T>>>,
     mapper: HashMap<T, usize>,
     path_strategy: PathStrategy,
     #[serde(skip, default = "default_cache")]
@@ -182,7 +182,7 @@ fn default_cache() -> RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize
     RefCell::new(HashMap::new())
 }
 
-impl<T: Vertex> Clone for Network<T> {
+impl<'a, T: Vertex> Clone for Network<'a, T> {
     fn clone(&self) -> Self {
         Network {
             links: self.links.clone(),
@@ -194,7 +194,7 @@ impl<T: Vertex> Clone for Network<T> {
     }
 }
 
-impl<T: Vertex> Network<T> {
+impl<'a, T: Vertex> Network<'a, T> {
     pub fn new(vertices: &Vec<T>, path_strategy: PathStrategy) -> Network<T> {
         Network {
             links: SymMatrix::new_fn(vertices.len(), |_, _| None),
@@ -285,14 +285,35 @@ impl<T: Vertex> Network<T> {
         }
     }
 
-    /// Vertices returns the set of vertices inside the network.
+    /// Vertices returns the set of vertices inside the network. It clones the vertices
     pub fn vertices(&self) -> HashSet<T> {
         self.mapper.keys().map(|k| k.clone()).collect::<HashSet<T>>()
     }
 
+    pub fn bandwidth_matrix(&self, predicate: impl Fn(&&T) -> bool) -> (SymMatrix<u32>, Vec<T>) {
+        let nodes = self.mapper.keys().filter(|n| predicate(n)).map(|v| v.clone()).collect::<Vec<T>>();
+        let matrix = SymMatrix::new_fn(nodes.len(), |row, col|
+            if row == col {
+                u32::MAX
+            } else {
+                self.bandwidth_between(&nodes[row], &nodes[col]).unwrap()
+            });
+        (matrix, nodes)
+    }
+
+    pub fn edit_vertex(&mut self, new_vertex: T) {
+        if let Some(v) = self.mapper.remove(&new_vertex) {
+            self.mapper.insert(new_vertex, v)
+        }
+    }
+
     pub fn add_edge(&mut self, from: &T, to: &T, bandwidth: u32) {
         if let Some((from_inter, to_inter)) = self.map_two(from, to) {
-            self.links[(from_inter, to_inter)] = Some(Link::build(from.clone(), to.clone(), from_inter, to_inter, bandwidth));
+            // Get the corresponding node in the mapper
+            let (src, _) = self.mapper.get_key_value(from).unwrap();
+            let (dest,_) = self.mapper.get_key_value(to).unwrap();
+
+            self.links[(from_inter, to_inter)] = Some(Link::build(src, dest, from_inter, to_inter, bandwidth));
             // invalidate shortest / widest paths cache!
             self.clear_path_caches();
         }
@@ -300,7 +321,11 @@ impl<T: Vertex> Network<T> {
 
     pub fn add_edge_with_props(&mut self, from: &T, to: &T, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) {
         if let Some((from_inter, to_inter)) = self.map_two(from, to) {
-            self.links[(from_inter, to_inter)] = Some(Link::build_all(from.clone(), to.clone(), from_inter, to_inter, bandwidth, latency_jitter, drop));
+            // Get the corresponding node in the mapper
+            let (src, _) = self.mapper.get_key_value(from).unwrap();
+            let (dest,_) = self.mapper.get_key_value(to).unwrap();
+
+            self.links[(from_inter, to_inter)] = Some(Link::build_all(src, dest, from_inter, to_inter, bandwidth, latency_jitter, drop));
             // invalidate shortest / widest paths cache!
             self.clear_path_caches();
         }
