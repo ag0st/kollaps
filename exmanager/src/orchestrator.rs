@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 
@@ -41,10 +40,11 @@ impl Orchestrator {
         for i in 0..matrix.size() {
             let host = self.host_mapping[equivalence[i]].clone();
             nodes[i].as_app_mut().set_host(host);
+            let h = nodes[i].as_app().host();
             // replace it in the network
             network.edit_vertex(nodes[i].clone());
             // Save that we attributed somebody to this host
-            self.attributed_emul.get_mut(&host).unwrap().insert(emul_id)
+            self.attributed_emul.get_mut(&h).unwrap().insert(emul_id);
         }
         // Now, we must reduce the bandwidth used by what we assigned
         for i in 0..matrix.size() {
@@ -60,9 +60,9 @@ impl Orchestrator {
         Ok(Some(network))
     }
 
-    pub fn stop_emulation(&mut self, emul_id: Uuid) -> Result<()> {
+    pub fn stop_emulation(&mut self, emul_id: &Uuid) -> Result<()> {
         // Get the emulation
-        if let Some((matrix, equivalence)) = self.emulations.get(&emul_id) {
+        if let Some((matrix, equivalence)) = self.emulations.get(emul_id) {
             // Add back the used bandwidth on the residual graph
             for i in 0..matrix.size() {
                 for j in 0..i {
@@ -73,26 +73,26 @@ impl Orchestrator {
 
             // remove the emulation from attributed emul
             for (_, set) in self.attributed_emul.iter_mut() {
-                set.remove(&emul_id)
+                set.remove(emul_id);
             }
         } else {
             return Err(Self::err_producer().create(ErrorKind::InvalidData, "no emulation registered"));
         }
 
         // Finally, remove the key from the map
-        self.emulations.remove_entry(&emul_id);
+        self.emulations.remove_entry(emul_id);
         Ok(())
     }
 
     pub fn update_with_cgraph(&mut self, cgraph: CGraph<ClusterNodeInfo>) -> Result<()> {
         let (matrix, mut nodes) = cgraph.speeds();
         // check all nodes that are / are not in our cluster
-        let to_remove = self.host_mapping.iter().filter(|n| !nodes.contains(n)).collect::<Vec<ClusterNodeInfo>>();
-        let to_add = nodes.iter().filter(|n| self.host_mapping.contains(n)).collect::<Vec<ClusterNodeInfo>>();
+        let to_remove = self.host_mapping.iter().filter(|n| !nodes.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
+        let to_add = nodes.iter().filter(|n| self.host_mapping.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
 
 
         for node in to_remove {
-            self.remove_cluster_node(node)
+            let _ = self.remove_cluster_node(node);
         }
 
         if !to_add.is_empty() {
@@ -100,17 +100,23 @@ impl Orchestrator {
                 acc.insert(nodes[index].clone(), index);
                 acc
             });
-            for node in to_add {
+            for node in to_add.into_iter() {
                 // First add the node in the host mapping
                 self.host_mapping.push(node);
+                let n = self.host_mapping.last().unwrap();
                 // Then we will grow the residual graph and add it the correct speeds
                 // growing
-                let node_index = nodes_to_index.get(&node)?;
+                let node_index = nodes_to_index.get(n).unwrap().clone();
                 self.residual_graph.grow_fn(1, |row, col| {
                     if row == col {
                         u32::MAX
                     } else {
-                        let other_node_index = nodes_to_index.get(&self.host_mapping[i])?;
+                        let other = if row == node_index {
+                            col
+                        } else {
+                            row
+                        };
+                        let other_node_index = nodes_to_index.get(&self.host_mapping[other]).unwrap().clone();
                         matrix[(node_index, other_node_index)]
                     }
                 });
@@ -133,9 +139,10 @@ impl Orchestrator {
             return Err(Self::err_producer().create(ErrorKind::InvalidData, "Cannot find the node to remove"));
         }
 
-        let uuids_concerned = self.attributed_emul.values().collect::<Vec<Uuid>>();
+        let uuids_concerned = self.attributed_emul.values().flatten().map(|id| id.clone()).collect::<Vec<Uuid>>();
         for i in 0..uuids_concerned.len() {
-            self.stop_emulation(uuids_concerned[i]).unwrap()
+            // We may try to remove to stop the same
+            let _ = self.stop_emulation(&uuids_concerned[i]);
         }
 
         // All the emulations are now considered stopped, so the bandwidth regarding this node are
@@ -278,7 +285,7 @@ fn next_comb(mut previous: Vec<usize>, k: usize, n: usize) -> Option<Vec<usize>>
     let mut i = k - 1;
     previous[i] = previous[i] + 1;
 
-    while i >= 0 && previous[i] > n - k + 1 + i {
+    while previous[i] > n - k + 1 + i {
         i = i - 1;
         previous[i] = previous[i] + 1;
     }

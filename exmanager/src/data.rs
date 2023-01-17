@@ -208,9 +208,9 @@ impl Hash for Node {
 
 /// Represent an emulation
 #[derive(Serialize, Deserialize)]
-pub struct Emulation<'a> {
+pub struct Emulation {
     uuid: String,
-    pub graph: Network<'a, Node>,
+    pub graph: Network<Node>,
     pub events: Vec<EmulationEvent>,
 }
 

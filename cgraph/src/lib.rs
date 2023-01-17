@@ -1,15 +1,14 @@
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use common::{Error, ErrorKind, ErrorProducer, Result};
 
 use serde::{Deserialize, Serialize};
 
+use common::{Error, ErrorKind, ErrorProducer, Result};
 use matrix::SymMatrix;
+pub use message::CGraphUpdate;
 
 mod message;
-
-pub use message::CGraphUpdate;
 
 // is_limited : bool, is_direct_tested: bool, speed: usize
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
@@ -236,7 +235,7 @@ impl<I: Clone + Eq> CGraph<I> {
             // Todo change the whole implementation to use u32 instead of usize for bandwidth
             self.c_graph[(row, col)].speed().clone() as u32
         });
-        let map = (0..matrix.size()).map(|index| self.node_by_index(index)).collect();
+        let map = (0..matrix.size()).map(|index| self.node_by_index(index).info).collect();
         (matrix, map)
     }
 

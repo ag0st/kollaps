@@ -39,12 +39,12 @@ impl Handler<EmulMessage> for FlowHandler {
 /// application are running an monitored. At changes it communicate with the others EmulCore
 /// dispatched across the cluster. It is also responsible to follow the dynamic events associated
 /// with their associated nodes.
-pub struct EmulCore<'a> {
+pub struct EmulCore {
     // By copying the applications in multiple places, we use a bit more memory but we achieve
     // way faster searches across the structures
     // There is no problem of cloning an app regarding mutability. An app itself do not allow
     // to be mutable. It doesn't publish its internals and no permissions is given via calls.
-    graph: Network<'a, Node>,
+    graph: Network<Node>,
     events: Option<Vec<EmulationEvent>>,
     my_apps: HashMap<Node, (UnixBinding<EmulMessage, NoHandler>, AppStatus)>,
     other_hosts: HashSet<ClusterNodeInfo>,

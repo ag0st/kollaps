@@ -4,6 +4,7 @@ use std::path::Path;
 use common::{RunnerConfig, Error, ErrorKind, Result};
 use cmanager;
 use clap::Parser;
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,8 +21,11 @@ async fn main() -> Result<()> {
     // remove mutability
     let config = config;
 
+    // Create channels for the different part of the application can communicate
+    let (sender, _receiver) = mpsc::channel(10);
+
     // Launch applications
-    cmanager::run(config).await
+    cmanager::run(config, sender).await
 }
 
 
