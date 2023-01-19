@@ -75,6 +75,7 @@ impl ContainerConfig {
         self.name.clone()
     }
 
+    #[allow(dead_code)]
     pub fn id(&self) -> Option<String> {
         self.id.clone()
     }
@@ -229,11 +230,11 @@ impl Emulation {
     pub fn uuid(&self) -> Uuid {
         parse_uuid_or_crash(self.uuid.clone())
     }
-    
+
     pub fn am_i_leader(&self, myself: &ClusterNodeInfo) -> bool {
         self.leader.eq(myself)
     }
-    
+
     pub fn leader(&self) -> ClusterNodeInfo {
         self.leader.clone()
     }

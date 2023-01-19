@@ -1,5 +1,4 @@
-use std::borrow::{Borrow, BorrowMut};
-use std::cell::RefCell;
+use std::borrow::BorrowMut;
 use std::cmp::{max, min, Ordering};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt::{Display, Formatter};
@@ -184,9 +183,9 @@ pub struct Network<T: Eq + Hash> {
 }
 
 /// Functions for deserialization
-fn default_cache() -> RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>> {
-    RefCell::new(HashMap::new())
-}
+// fn default_cache() -> RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>> {
+//     RefCell::new(HashMap::new())
+// }
 
 impl<T: Vertex> Clone for Network<T> {
     fn clone(&self) -> Self {
@@ -467,9 +466,9 @@ impl<T: Vertex> Network<T> {
                 // if let Some(widest_path) = cache.get(&from) {
                 //     widest_path.clone()
                 // } else {
-                    let widest_path = self.widest_path(from);
-                    // cache.insert(from, widest_path.clone());
-                    widest_path
+                let widest_path = self.widest_path(from);
+                // cache.insert(from, widest_path.clone());
+                widest_path
                 // }
             }
             PathStrategy::ShortestPath => {
@@ -477,9 +476,9 @@ impl<T: Vertex> Network<T> {
                 // if let Some(shortest_path) = cache.get(&from) {
                 //     shortest_path.clone()
                 // } else {
-                    let shortest_path = self.shortest_path(from);
-                    // cache.insert(from, shortest_path.clone());
-                    shortest_path
+                let shortest_path = self.shortest_path(from);
+                // cache.insert(from, shortest_path.clone());
+                shortest_path
                 // }
             }
         }

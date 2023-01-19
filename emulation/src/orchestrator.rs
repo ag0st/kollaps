@@ -93,7 +93,7 @@ impl Orchestrator {
 
     pub fn update_with_cgraph(&mut self, mut cgraph: CGraph<ClusterNodeInfo>) -> Result<Vec<Uuid>> {
         Self::convert_cgraph_nodeinfo(self.controllers_port, &mut cgraph);
-        let (matrix, mut nodes) = cgraph.speeds();
+        let (matrix, nodes) = cgraph.speeds();
         // check all nodes that are / are not in our cluster
         let to_remove = self.host_mapping.iter().filter(|n| !nodes.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
         let to_add = nodes.iter().filter(|n| self.host_mapping.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();

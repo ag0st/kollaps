@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, Mutex, oneshot};
+use tokio::sync::{mpsc, Mutex};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::sleep_until;
 use uuid::Uuid;

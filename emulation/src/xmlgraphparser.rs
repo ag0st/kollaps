@@ -182,6 +182,7 @@ pub fn parse_services(services: Node, emul_id: Uuid, nodes: &mut HashMap<String,
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn process_active_paths(activepaths: &str) -> Vec<String> {
     let activepaths = activepaths.replace("[", "");
     let activepaths = activepaths.replace("]", "");
