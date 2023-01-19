@@ -30,7 +30,7 @@ impl Controller {
         // Parse my ip address
         let my_ip = match IpAddr::from_str(&*config.ip_address) {
             Ok(ip) => ip,
-            Err(e) => return Err(Error::wrap("CMANAGER CTRL", ErrorKind::NotASocketAddr, "Cannot parse the IP address", e))
+            Err(e) => return Err(Error::wrap("EMUL CTRL", ErrorKind::NotASocketAddr, "Cannot parse the IP address", e))
         };
         let gateway = IpAddr::from_str(&*config.gateway).unwrap();
         let subnet = Subnet::from(&*config.subnet);

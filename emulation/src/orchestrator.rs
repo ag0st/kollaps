@@ -40,7 +40,8 @@ impl Orchestrator {
             return Ok(None);
         }
 
-        let mut cluster_nodes_affected = Vec::new();
+        // Use an hashset to be sure it does not contains doublons
+        let mut cluster_nodes_affected = HashSet::new();
 
         let equivalence = equivalence.unwrap();
         for i in 0..matrix.size() {
@@ -50,13 +51,23 @@ impl Orchestrator {
             // replace it in the network
             network.edit_vertex(nodes[i].clone());
             // Save that we attributed somebody to this host
-            self.attributed_emul.get_mut(&h).unwrap().insert(emul_id);
-            cluster_nodes_affected.push(h.clone());
+            if let Some(entry) = self.attributed_emul.get_mut(&h) {
+                entry.insert(emul_id);
+            } else {
+                let mut set = HashSet::new();
+                set.insert(emul_id);
+                self.attributed_emul.insert(h.clone(), set);
+            }
+
+            cluster_nodes_affected.insert(h.clone());
         }
         // Now, we must reduce the bandwidth used by what we assigned
         for i in 0..matrix.size() {
             for j in 0..i {
-                if i == j { continue; }
+                // Do not decrease the speed if the node equivalence for i and j are the same. It means
+                // That the nodes i and j have been deployed on the same machine and it doesn't affect the bandwidth
+                // of the host as the bandwidth with ourself is "unlimited"
+                if i == j || equivalence[i] == equivalence[j] { continue; }
                 self.residual_graph[(equivalence[i], equivalence[j])] -= matrix[(i, j)]
             }
         }
@@ -64,7 +75,7 @@ impl Orchestrator {
         // Save the emulation for when we need to remove it
         self.emulations.insert(emul_id, (matrix, equivalence));
 
-        Ok(Some((network, cluster_nodes_affected)))
+        Ok(Some((network, cluster_nodes_affected.iter().map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>())))
     }
 
     pub fn stop_emulation(&mut self, emul_id: &Uuid) -> Result<()> {
@@ -162,7 +173,7 @@ impl Orchestrator {
         // like in default, we can safely remove it from the SymMatrix
         self.residual_graph = self.residual_graph.remove_id(id.unwrap());
         self.host_mapping.remove(id.unwrap());
-        self.attributed_emul.remove_entry(&node).unwrap();
+        self.attributed_emul.remove_entry(&node);
 
         Ok(uuids_concerned)
     }
@@ -188,7 +199,7 @@ impl Orchestrator {
             searching_set_size = searching_set_size + residual.size() * clones;
         }
 
-
+        // todo: test this first combination
         let mut comb = (0..g1.size()).collect::<Vec<usize>>();
         // For each combination in this set, test it
         while let Some(combination) = next_comb(comb.clone(), g1.size(), searching_set_size) {
@@ -197,7 +208,7 @@ impl Orchestrator {
                 // to its smallest modulo class.
                 let mut val = val % residual.size();
                 while !acc.insert(val.clone()) {
-                    val = val * residual.size()
+                    val = val + residual.size()
                 }
                 acc
             });
@@ -206,9 +217,12 @@ impl Orchestrator {
                 comb = combination;
                 continue;
             }
+
             // create the sub-graph from the searching set and the combination
             let sub_graph = SymMatrix::new_fn(combination.len(), |row, col| {
-                residual[(combination[row], combination[col])]
+                let i1 = combination[row] % residual.size();
+                let i2 = combination[col] % residual.size();
+                residual[(i1, i2)]
             });
 
             let result = Self::graph_isomorphism(g1, &sub_graph)?;

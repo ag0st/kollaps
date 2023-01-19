@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{mpsc};
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use cgraph::{CGraph, CGraphUpdate};
 use common::{ClusterNodeInfo, TopologyMessage, TopologyRejectReason, Result, Error, ErrorKind, EmulationEvent};
@@ -48,11 +50,21 @@ impl OrchestrationManager {
     async fn accept_topology(mut self) -> Result<()> {
         let (sender, mut receiver) = mpsc::channel(10);
         // Create the handler
-        let handler = DefaultHandler::<TopologyMessage>::new(sender);
+        let handler = DefaultHandler::<TopologyMessage>::new(sender.clone());
 
         // listen on TCP
         let mut binding = TCP::bind_addr((ALL_ADDR, self.my_info_leader.port), Some(handler)).await.unwrap();
         binding.listen().unwrap();
+
+        // todo: For debugging
+        let mut file = File::open("/home/agost/workspace/MSc/development/kollaps/emulation/src/topology.xml").await
+            .expect("File not found");
+        let mut data = String::new();
+        file.read_to_string(&mut data).await
+            .expect("Error while reading file");
+        let (tx, rx) = oneshot::channel();
+        sender.send(MessageWrapper{ message: TopologyMessage::NewTopology(data), sender: Some(tx)}).await.unwrap();
+
 
         loop {
             tokio::select! {
@@ -107,7 +119,10 @@ impl OrchestrationManager {
                                     Some((network, cluster_nodes_affected)) => {
                                         let id = uuid.clone();
                                         match self.send_start_emulation(id, network, cluster_nodes_affected, events).await {
-                                            Ok(_) => sender.send(Some(TopologyMessage::Accepted)).unwrap(),
+                                            Ok(_) => {
+                                                // Todo: Just for debug sake
+                                                // sender.send(Some(TopologyMessage::Accepted)).unwrap()
+                                            },
                                             Err(_) => sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap()
                                         }
                                     }

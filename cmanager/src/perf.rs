@@ -1,4 +1,4 @@
-use common::{ClusterNodeInfo, Error, ErrorKind, Result, ToSocketAddr};
+use common::{ClusterNodeInfo, Error, ErrorKind, Result, ToBytesSerialize, ToSocketAddr};
 use std::sync::Arc;
 
 use serde_json::Value;

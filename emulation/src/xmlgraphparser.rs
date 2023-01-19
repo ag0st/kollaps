@@ -318,6 +318,9 @@ pub fn parse_schedule(name_to_service: &HashMap<String, crate::data::Node>, dyna
             }
         };
         // Create the event
+        if let None = name_to_service.get(&node_name) {
+            produce_err(&*format!("The node {} found in the scheduled event is not in the services.", node_name))?
+        }
         result.push(EmulationEvent {
             app_id: name_to_service.get(&node_name).unwrap().id(),
             time: Duration::from_secs(time as u64),

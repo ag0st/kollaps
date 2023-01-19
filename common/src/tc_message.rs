@@ -24,7 +24,7 @@ impl TCConf {
             drop: None,
         }
     }
-    
+
     pub fn bandwidth_kbs(&mut self, bw: u32) -> &mut Self {
         self.bandwidth_kbitps = Some(bw);
         self
@@ -62,7 +62,7 @@ impl FlowConf {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EmulBeginTime {
     #[serde(with = "serde_millis")]
-    pub time: Instant
+    pub time: Instant,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -76,7 +76,7 @@ pub enum EmulMessage {
     EmulAbort,
     SocketReady,
     EmulStart(EmulBeginTime),
-    Event(EmulationEvent)
+    Event(EmulationEvent),
 }
 
 
@@ -105,19 +105,6 @@ pub enum EventAction {
 
 
 impl EmulMessage {
-    pub fn from_bytes(mut buf: BytesMut) -> Result<EmulMessage> {
-        // takes the two first bytes for the opcode
-        let opcode: u16 = buf.get_u16();
-        // Get the payload if it exists
-        let payload = if buf.has_remaining() {
-            Some(String::from_utf8(buf[..].to_owned()).unwrap())
-        } else {
-            None
-        };
-        // transform everything to return an EmulMessage
-        EmulMessage::opcode_2_event(opcode, payload)
-    }
-
     pub fn opcode_2_event(opcode: u16, data: Option<String>) -> Result<EmulMessage> {
         match opcode {
             0x0001 if data.is_some() => {
@@ -150,7 +137,7 @@ impl EmulMessage {
                 let data = data.as_deref().unwrap_or("");
                 let time = deserialize::<EmulBeginTime>(data)?;
                 Ok(EmulMessage::EmulStart(time))
-            },
+            }
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -182,6 +169,19 @@ impl ToBytesSerialize for EmulMessage {
             _ => {}
         };
         Bytes::from(buf)
+    }
+
+    fn from_bytes(mut buf: BytesMut) -> Result<EmulMessage> {
+        // takes the two first bytes for the opcode
+        let opcode: u16 = buf.get_u16();
+        // Get the payload if it exists
+        let payload = if buf.has_remaining() {
+            Some(String::from_utf8(buf[..].to_owned()).unwrap())
+        } else {
+            None
+        };
+        // transform everything to return an EmulMessage
+        EmulMessage::opcode_2_event(opcode, payload)
     }
 }
 

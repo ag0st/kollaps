@@ -33,7 +33,7 @@ impl WCGraph {
     pub fn new() -> WCGraph {
         WCGraph(CGraph::new())
     }
-    
+
     pub fn graph(&self) -> CGraph<ClusterNodeInfo> {
         self.0.clone()
     }
@@ -63,19 +63,6 @@ pub enum Event {
 }
 
 impl Event {
-    pub fn from_bytes(mut buf: BytesMut) -> Result<Event> {
-        // takes the two first bytes for the opcode
-        let opcode: u16 = buf.get_u16();
-        // Get the payload if it exists
-        let payload = if buf.has_remaining() {
-            Some(String::from_utf8(buf[..].to_owned()).unwrap())
-        } else {
-            None
-        };
-        // transform everything to return an Event
-        Event::opcode_2_event(opcode, payload)
-    }
-
     pub fn opcode_2_event(opcode: u16, data: Option<String>) -> Result<Event> {
         match opcode {
             0x0000 if data.is_some() => {
@@ -157,6 +144,19 @@ impl ToBytesSerialize for Event {
             _ => {}
         };
         Bytes::from(buf)
+    }
+
+    fn from_bytes(mut buf: BytesMut) -> Result<Event> {
+        // takes the two first bytes for the opcode
+        let opcode: u16 = buf.get_u16();
+        // Get the payload if it exists
+        let payload = if buf.has_remaining() {
+            Some(String::from_utf8(buf[..].to_owned()).unwrap())
+        } else {
+            None
+        };
+        // transform everything to return an Event
+        Event::opcode_2_event(opcode, payload)
     }
 }
 

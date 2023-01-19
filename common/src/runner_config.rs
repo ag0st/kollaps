@@ -91,5 +91,6 @@ pub struct RunnerConfig {
     /// we send a Waiting time to retry to the second request.
     pub cjq_waiting_time_seconds: u64,
     /// This is the path of the netmod executable to use.
+    #[clap(default_value_t=String::from("/home/agost/workspace/MSc/development/kollaps/target/release/reporter"), long)]
     pub reporter_exec_path: String,
 }

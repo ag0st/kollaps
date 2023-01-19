@@ -15,7 +15,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::sleep_until;
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf};
+use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize};
 use dockhelper::DockerHelper;
 use netgraph::Network;
 use nethelper::{Handler, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, Unix, UnixBinding};

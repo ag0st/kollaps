@@ -322,7 +322,7 @@ impl<T: Vertex> Network<T> {
 
     pub fn edit_vertex(&mut self, new_vertex: T) {
         if let Some(v) = self.mapper.remove(&new_vertex) {
-            self.mapper.insert(new_vertex, v).unwrap();
+            self.mapper.insert(new_vertex, v);
         }
     }
 

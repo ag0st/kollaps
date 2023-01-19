@@ -11,7 +11,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 
 use cgraph::CGraphUpdate;
-use common::{ClusterNodeInfo, Error, ErrorKind, Result};
+use common::{ClusterNodeInfo, Error, ErrorKind, Result, ToBytesSerialize};
 use common::RunnerConfig;
 use nethelper::{ALL_ADDR, DefaultHandler, Handler, handler_once_box, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, UDP, UDPBinding};
 
