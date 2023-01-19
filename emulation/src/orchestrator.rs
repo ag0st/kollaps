@@ -15,20 +15,23 @@ pub struct Orchestrator {
     host_mapping: Vec<ClusterNodeInfo>,
     attributed_emul: HashMap<ClusterNodeInfo, HashSet<Uuid>>,
     emulations: HashMap<Uuid, (SymMatrix<u32>, Vec<usize>)>,
+    controllers_port: u16,
 }
 
 impl Orchestrator {
-    pub fn new(cgraph: CGraph<ClusterNodeInfo>) -> Orchestrator {
+    pub fn new(mut cgraph: CGraph<ClusterNodeInfo>, controllers_port: u16) -> Orchestrator {
+        Self::convert_cgraph_nodeinfo(controllers_port, &mut cgraph);
         let (residual_graph, host_mapping) = cgraph.speeds();
         Orchestrator {
             residual_graph,
             host_mapping,
             attributed_emul: HashMap::new(),
             emulations: HashMap::new(),
+            controllers_port
         }
     }
 
-    pub fn new_emulation(&mut self, mut network: Network<Node>, emul_id: Uuid) -> Result<Option<Network<Node>>> {
+    pub fn new_emulation(&mut self, mut network: Network<Node>, emul_id: Uuid) -> Result<Option<(Network<Node>, Vec<ClusterNodeInfo>)>> {
         // First thing is to convert the network into a SymMatrix that represent the bandwidth between each nodes
         let (matrix, mut nodes) = network.bandwidth_matrix(|n| n.is_app());
         let equivalence = self.find_isomorphism(matrix.clone())?;
@@ -36,6 +39,9 @@ impl Orchestrator {
             // no isomorphism found for this
             return Ok(None);
         }
+
+        let mut cluster_nodes_affected = Vec::new();
+
         let equivalence = equivalence.unwrap();
         for i in 0..matrix.size() {
             let host = self.host_mapping[equivalence[i]].clone();
@@ -45,6 +51,7 @@ impl Orchestrator {
             network.edit_vertex(nodes[i].clone());
             // Save that we attributed somebody to this host
             self.attributed_emul.get_mut(&h).unwrap().insert(emul_id);
+            cluster_nodes_affected.push(h.clone());
         }
         // Now, we must reduce the bandwidth used by what we assigned
         for i in 0..matrix.size() {
@@ -57,7 +64,7 @@ impl Orchestrator {
         // Save the emulation for when we need to remove it
         self.emulations.insert(emul_id, (matrix, equivalence));
 
-        Ok(Some(network))
+        Ok(Some((network, cluster_nodes_affected)))
     }
 
     pub fn stop_emulation(&mut self, emul_id: &Uuid) -> Result<()> {
@@ -84,16 +91,21 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub fn update_with_cgraph(&mut self, cgraph: CGraph<ClusterNodeInfo>) -> Result<()> {
+    pub fn update_with_cgraph(&mut self, mut cgraph: CGraph<ClusterNodeInfo>) -> Result<Vec<Uuid>> {
+        Self::convert_cgraph_nodeinfo(self.controllers_port, &mut cgraph);
         let (matrix, mut nodes) = cgraph.speeds();
         // check all nodes that are / are not in our cluster
         let to_remove = self.host_mapping.iter().filter(|n| !nodes.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
         let to_add = nodes.iter().filter(|n| self.host_mapping.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
 
-
+        let mut uuid_affected_by_remove: HashSet<Uuid> = HashSet::new();
         for node in to_remove {
-            let _ = self.remove_cluster_node(node);
+            let affected_uuids = self.remove_cluster_node(node).unwrap();
+            for au in affected_uuids {
+                uuid_affected_by_remove.insert(au);
+            }
         }
+        let uuid_affected_by_remove = uuid_affected_by_remove.iter().map(|u| u.clone()).collect::<Vec<Uuid>>();
 
         if !to_add.is_empty() {
             let nodes_to_index = (0..nodes.len()).fold(HashMap::with_capacity(nodes.len()), |mut acc, index| {
@@ -122,10 +134,11 @@ impl Orchestrator {
                 });
             }
         }
-        Ok(())
+        Ok(uuid_affected_by_remove)
     }
 
-    pub fn remove_cluster_node(&mut self, node: ClusterNodeInfo) -> Result<Vec<Uuid>> {
+    pub fn remove_cluster_node(&mut self, mut node: ClusterNodeInfo) -> Result<Vec<Uuid>> {
+        node.port = self.controllers_port;
         // Get the id of the node
         let mut id: Option<usize> = None;
         for i in 0..self.host_mapping.len() {
@@ -152,6 +165,10 @@ impl Orchestrator {
         self.attributed_emul.remove_entry(&node).unwrap();
 
         Ok(uuids_concerned)
+    }
+
+    fn convert_cgraph_nodeinfo(port: u16, graph: &mut CGraph<ClusterNodeInfo>) {
+        graph.map_nodes(|cni| cni.port = port)
     }
 
     fn find_isomorphism(&self, graph: SymMatrix<u32>) -> Result<Option<Vec<usize>>> {

@@ -1,8 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::net::IpAddr;
-use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use crate::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
@@ -61,35 +60,9 @@ impl FlowConf {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct EmulMessageWrapper(String, EmulMessage);
-
-impl EmulMessageWrapper {
-    pub fn from_bytes(buf: BytesMut) -> Result<Self> {
-        let in_string = String::from_utf8(buf[..].to_owned()).unwrap();
-        deserialize::<EmulMessageWrapper>(&*in_string)
-    }
-
-    pub fn new(uuid: uuid::Uuid, mess: EmulMessage) -> EmulMessageWrapper {
-        EmulMessageWrapper {
-            0: uuid.to_string(),
-            1: mess,
-        }
-    }
-    pub fn is_for(&self, emul_id: &uuid::Uuid) -> bool {
-        uuid::Uuid::from_str(&*self.0).unwrap().eq(emul_id)
-    }
-    pub fn message(&self) -> EmulMessage {
-        self.1.clone()
-    }
-}
-
-impl ToBytesSerialize for EmulMessageWrapper {
-    fn serialize(&self) -> Bytes {
-        let bytes = serialize(self);
-        let mut buf = BytesMut::new();
-        buf.put_slice(bytes.as_slice());
-        Bytes::from(buf)
-    }
+pub struct EmulBeginTime {
+    #[serde(with = "serde_millis")]
+    pub time: Instant
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -100,7 +73,9 @@ pub enum EmulMessage {
     TCDisconnect,
     TCReconnect,
     TCTeardown,
+    EmulAbort,
     SocketReady,
+    EmulStart(EmulBeginTime),
     Event(EmulationEvent)
 }
 
@@ -150,6 +125,8 @@ impl EmulMessage {
                 let fl_conf = deserialize::<FlowConf>(data)?;
                 Ok(EmulMessage::FlowUpdate(fl_conf))
             }
+
+            0x0002 => Ok(EmulMessage::EmulAbort),
             0x0003 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
                 let tc_conf = deserialize::<TCConf>(data)?;
@@ -169,6 +146,11 @@ impl EmulMessage {
                 let event = deserialize::<EmulationEvent>(data)?;
                 Ok(EmulMessage::Event(event))
             }
+            0x000A if data.is_some() => {
+                let data = data.as_deref().unwrap_or("");
+                let time = deserialize::<EmulBeginTime>(data)?;
+                Ok(EmulMessage::EmulStart(time))
+            },
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -176,6 +158,7 @@ impl EmulMessage {
     pub fn event_2_opcode(com: &EmulMessage) -> u16 {
         match com {
             EmulMessage::FlowUpdate(_) => 0x0001,
+            EmulMessage::EmulAbort => 0x0002,
             EmulMessage::TCInit(_) => 0x0003,
             EmulMessage::TCUpdate(_) => 0x0004,
             EmulMessage::TCDisconnect => 0x0005,
@@ -183,12 +166,13 @@ impl EmulMessage {
             EmulMessage::TCTeardown => 0x0007,
             EmulMessage::SocketReady => 0x0008,
             EmulMessage::Event(_) => 0x0009,
+            EmulMessage::EmulStart(_) => 0x000A,
         }
     }
 }
 
 impl ToBytesSerialize for EmulMessage {
-    fn serialize(&self) -> Bytes {
+    fn serialize_to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put_u16(EmulMessage::event_2_opcode(self));
         match self {
@@ -205,12 +189,14 @@ impl Display for EmulMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             EmulMessage::FlowUpdate(_) => write!(f, "FlowUpdate"),
+            EmulMessage::EmulAbort => write!(f, "EmulationAborted"),
             EmulMessage::TCInit(_) => write!(f, "TCInit"),
             EmulMessage::TCUpdate(_) => write!(f, "TCUpdate"),
             EmulMessage::TCDisconnect => write!(f, "TCDisconnect"),
             EmulMessage::TCReconnect => write!(f, "TCReconnect"),
             EmulMessage::TCTeardown => write!(f, "TCTeardown"),
             EmulMessage::SocketReady => write!(f, "SocketReady"),
+            EmulMessage::EmulStart(_) => write!(f, "EmulationReady"),
             EmulMessage::Event(_) => write!(f, "EmulationEvent"),
         }
     }

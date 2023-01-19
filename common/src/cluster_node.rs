@@ -3,9 +3,10 @@ use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::vec;
-use bytes::{BufMut, Bytes, BytesMut};
-use crate::{serialize, ToBytesSerialize, ToSocketAddr};
-use serde::{Serialize, Deserialize};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{ToBytesSerialize, ToSocketAddr};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct ClusterNodeInfo {
@@ -53,10 +54,4 @@ impl ClusterNodeInfo {
     }
 }
 
-impl ToBytesSerialize for ClusterNodeInfo {
-    fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-        buf.put_slice(serialize(self).as_slice());
-        Bytes::from(buf)
-    }
-}
+impl ToBytesSerialize for ClusterNodeInfo {}

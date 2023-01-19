@@ -9,7 +9,7 @@ members = [
     "netgraph",
     "bwsync",
     "dockhelper",
-    "exmanager",
+    "emulation",
     "reporter",
     "reptest",
     "monitor",

@@ -12,20 +12,31 @@ async fn main() -> Result<()> {
     let needed_software = vec!["docker", "iperf3", "ip", "sudo", "nsenter"];
     check_software_dependency(needed_software)?;
     // Get the netmod executable
-    let netmod = check_netmod_executable()?;
+    let netmod = check_reporter_executable()?;
 
     // Parse the config and insert the netmod executable path in it
     let mut config = RunnerConfig::parse();
-    config.netmod_exec_path = netmod;
+    config.reporter_exec_path = netmod;
 
     // remove mutability
     let config = config;
 
+    let (cgraph_update_sender, cgraph_update_receiver) = if config.leader {
+        let (sender, _receiver) = mpsc::channel(10);
+        (Some(sender), Some(_receiver))
+    } else {
+        (None, None)
+    };
+
     // Create channels for the different part of the application can communicate
-    let (sender, _receiver) = mpsc::channel(10);
 
     // Launch applications
-    cmanager::run(config, sender).await
+    let conf_for_cmanager = config.clone();
+    tokio::spawn(async move {
+        cmanager::run(conf_for_cmanager, cgraph_update_sender).await.unwrap();
+    });
+    emulation::run(config, cgraph_update_receiver).await.unwrap();
+    Ok(())
 }
 
 
@@ -48,8 +59,8 @@ fn check_software_dependency(software: Vec<&str>) -> Result<()> {
     Ok(())
 }
 
-fn check_netmod_executable() -> Result<String> {
-    let paths = vec!["./target/release/netmod", "./target/debug/netmod"];
+fn check_reporter_executable() -> Result<String> {
+    let paths = vec!["./target/release/reporter", "./target/debug/reporter"];
     for pa in paths {
         if Path::new(pa).exists() {
             return Ok(pa.to_string());

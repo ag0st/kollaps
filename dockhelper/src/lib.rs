@@ -9,6 +9,7 @@ mod cmd;
 
 const NETWORK_NAME: &str = "kollaps_ipvlan";
 
+#[derive(Clone)]
 pub struct DockerHelper {
     network_name: String,
 }

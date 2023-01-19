@@ -1,8 +1,8 @@
-use std::borrow::BorrowMut;
+use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefCell;
 use std::cmp::{max, min, Ordering};
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -37,13 +37,13 @@ impl<T: Vertex> Path<T> {
     }
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub enum Duplex {
     HalfDuplex,
     FullDuplex,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Link<T> {
     /// Internal source and destination store the index
     /// in the graph where point source, resp. destination.
@@ -72,6 +72,12 @@ impl<T: Vertex> Clone for Link<T> {
             drop: self.drop,
             duplex: self.duplex,
         }
+    }
+}
+
+impl<T: Vertex> Display for Link<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} -> {} : {} \n", self.source, self.destination, self.bandwidth)
     }
 }
 
@@ -156,13 +162,13 @@ impl<T: Vertex> Link<T> {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum PathStrategy {
     WidestPath,
     ShortestPath,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 /// Network represents a network with its nodes and inter-connection.
 /// This structure offers multiple method and path strategy that helps working with the network.
 /// Be aware that this structure manage caches for path finding and because of this, it is not safe
@@ -171,10 +177,10 @@ pub struct Network<T: Eq + Hash> {
     links: SymMatrix<Option<Link<T>>>,
     mapper: HashMap<T, usize>,
     path_strategy: PathStrategy,
-    #[serde(skip, default = "default_cache")]
-    shortest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
-    #[serde(skip, default = "default_cache")]
-    widest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
+    // #[serde(skip, default = "default_cache")]
+    // shortest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
+    // #[serde(skip, default = "default_cache")]
+    // widest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
 }
 
 /// Functions for deserialization
@@ -188,9 +194,23 @@ impl<T: Vertex> Clone for Network<T> {
             links: self.links.clone(),
             mapper: self.mapper.clone(),
             path_strategy: self.path_strategy.clone(),
-            shortest_path_cache: RefCell::new(self.shortest_path_cache.borrow().clone()),
-            widest_path_cache: RefCell::new(self.widest_path_cache.borrow().clone()),
+            // shortest_path_cache: RefCell::new(self.shortest_path_cache.borrow().clone()),
+            // widest_path_cache: RefCell::new(self.widest_path_cache.borrow().clone()),
         }
+    }
+}
+
+impl<T: Vertex> Display for Network<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut data = String::new();
+        for i in 0..self.links.size() {
+            for j in 0..i {
+                if let Some(link) = self.links[(i, j)].as_ref() {
+                    data.push_str(&*link.to_string());
+                }
+            }
+        }
+        write!(f, "{}", data)
     }
 }
 
@@ -204,8 +224,8 @@ impl<T: Vertex> Network<T> {
                     acc
                 }),
             path_strategy,
-            shortest_path_cache: RefCell::new(HashMap::new()),
-            widest_path_cache: RefCell::new(HashMap::new()),
+            // shortest_path_cache: RefCell::new(HashMap::new()),
+            // widest_path_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -339,8 +359,8 @@ impl<T: Vertex> Network<T> {
     }
 
     fn clear_path_caches(&self) {
-        self.widest_path_cache.borrow_mut().clear();
-        self.shortest_path_cache.borrow_mut().clear();
+        // self.widest_path_cache.borrow_mut().clear();
+        // self.shortest_path_cache.borrow_mut().clear();
     }
 
     /// Get the bandwidth between two nodes. Uses the strategy defined to find the path,
@@ -443,24 +463,24 @@ impl<T: Vertex> Network<T> {
     fn path_between(&self, from: usize) -> (Vec<Option<u32>>, Vec<Option<usize>>) {
         match self.path_strategy {
             PathStrategy::WidestPath => {
-                let mut cache = self.widest_path_cache.borrow_mut();
-                if let Some(widest_path) = cache.get(&from) {
-                    widest_path.clone()
-                } else {
+                // let mut cache = self.widest_path_cache.borrow_mut();
+                // if let Some(widest_path) = cache.get(&from) {
+                //     widest_path.clone()
+                // } else {
                     let widest_path = self.widest_path(from);
-                    cache.insert(from, widest_path.clone());
+                    // cache.insert(from, widest_path.clone());
                     widest_path
-                }
+                // }
             }
             PathStrategy::ShortestPath => {
-                let mut cache = self.shortest_path_cache.borrow_mut();
-                if let Some(shortest_path) = cache.get(&from) {
-                    shortest_path.clone()
-                } else {
+                // let mut cache = self.shortest_path_cache.borrow_mut();
+                // if let Some(shortest_path) = cache.get(&from) {
+                //     shortest_path.clone()
+                // } else {
                     let shortest_path = self.shortest_path(from);
-                    cache.insert(from, shortest_path.clone());
+                    // cache.insert(from, shortest_path.clone());
                     shortest_path
-                }
+                // }
             }
         }
     }

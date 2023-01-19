@@ -6,10 +6,10 @@ use std::net::{IpAddr};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, EmulationEvent, Error, ErrorKind};
+use common::{ClusterNodeInfo, EmulationEvent, EmulMessage, Error, ErrorKind, ToBytesSerialize};
 use netgraph::Network;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ApplicationKind {
     // todo: not implemented yet
     BareMetal,
@@ -19,7 +19,7 @@ pub enum ApplicationKind {
 
 /// Represent a container configuration, can be used to express one already existing
 /// by leaving the image_command empty or one that must be started by setting the image_command.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ContainerConfig {
     name: String,
     id: Option<String>,
@@ -31,7 +31,7 @@ pub enum AppStatus {
     NotInit,
     Running,
     Stopped,
-    Crashed
+    Crashed,
 }
 
 impl ContainerConfig {
@@ -83,7 +83,7 @@ impl ContainerConfig {
 
 /// Represent an application being part of the emulation.
 /// It is notably used by the topology processor as vertex in the netgraph.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Application {
     ip_app: Option<IpAddr>,
     host: Option<ClusterNodeInfo>,
@@ -120,7 +120,7 @@ impl Application {
     pub fn name(&self) -> String {
         self.name.clone()
     }
-    
+
     pub fn set_host(&mut self, host: ClusterNodeInfo) {
         self.host = Some(host);
     }
@@ -134,7 +134,7 @@ impl Display for Application {
 }
 
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Node {
     App(u32, Application),
     Bridge(u32),
@@ -153,14 +153,14 @@ impl Node {
             Node::Bridge(_) => panic!("Trying to get the app from a bridge")
         }
     }
-    
+
     pub fn as_app_mut(&mut self) -> &mut Application {
         match self {
             Node::App(_, app) => app,
             Node::Bridge(_) => panic!("Trying to get the app from a bridge")
         }
     }
-    
+
     pub fn is_same_by_id(&self, id: u32) -> bool {
         match self {
             Node::App(my_id, _) => id.eq(my_id),
@@ -187,7 +187,7 @@ impl Display for Node {
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Node::App(id_1,_), Node::App(id_2, _)) => id_1 == id_2,
+            (Node::App(id_1, _), Node::App(id_2, _)) => id_1 == id_2,
             (Node::Bridge(id_1), Node::Bridge(id_2)) => id_1 == id_2,
             (_, _) => false
         }
@@ -207,17 +207,19 @@ impl Hash for Node {
 }
 
 /// Represent an emulation
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Emulation {
+    leader: ClusterNodeInfo,
     uuid: String,
     pub graph: Network<Node>,
     pub events: Vec<EmulationEvent>,
 }
 
 impl Emulation {
-    pub fn build(uuid: Uuid, graph: &Network<Node>, events: &Vec<EmulationEvent>) -> Emulation {
+    pub fn build(uuid: Uuid, graph: &Network<Node>, events: &Vec<EmulationEvent>, leader: ClusterNodeInfo) -> Emulation {
         let events_clone = events.iter().map(|e| e.clone()).collect();
         Emulation {
+            leader,
             uuid: uuid.to_string(),
             graph: graph.clone(),
             events: events_clone,
@@ -226,6 +228,14 @@ impl Emulation {
 
     pub fn uuid(&self) -> Uuid {
         parse_uuid_or_crash(self.uuid.clone())
+    }
+    
+    pub fn am_i_leader(&self, myself: &ClusterNodeInfo) -> bool {
+        self.leader.eq(myself)
+    }
+    
+    pub fn leader(&self) -> ClusterNodeInfo {
+        self.leader.clone()
     }
 }
 
@@ -282,3 +292,22 @@ impl<'a, T: netgraph::Vertex> Flow<'a, T> {
         Flow { source, destination, bandwidth, target_bandwidth }
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ControllerMessage {
+    EmulCoreInterchange(String, EmulMessage),
+    EmulationStart(Emulation),
+    EmulationStop(String),
+}
+
+impl Display for ControllerMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ControllerMessage::EmulCoreInterchange(id, mess) => write!(f, "EmulInterchange for {}: {}", id, mess),
+            ControllerMessage::EmulationStart(emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
+            ControllerMessage::EmulationStop(uuid) => write!(f, "EmulationStop of {}", uuid),
+        }
+    }
+}
+
+impl ToBytesSerialize for ControllerMessage {}

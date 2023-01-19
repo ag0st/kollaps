@@ -6,9 +6,10 @@ mod subnet;
 mod tc_message;
 mod reporter_config;
 mod cluster_node;
+mod topology_message;
 
 use std::net::IpAddr;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 // re-exporting the configs objects
 pub use runner_config::RunnerConfig;
@@ -24,7 +25,10 @@ pub use error::ErrorProducer;
 pub use subnet::{Subnet, IpMask, ToSocketAddr};
 
 // Exporting tc messages for communication between main app en reporter
-pub use tc_message::{EmulMessage, FlowConf, TCConf, EmulationEvent, EventAction, EmulMessageWrapper};
+pub use tc_message::{EmulMessage, FlowConf, TCConf, EmulationEvent, EventAction, EmulBeginTime};
+
+// Exporting topology messages for the pubapi and the client
+pub use topology_message::{TopologyMessage, TopologyRejectReason};
 
 // exporting the ClusterNodeInfo
 pub use cluster_node::ClusterNodeInfo;
@@ -39,8 +43,18 @@ pub fn serialize<'a, T: Serialize>(data: &T) -> Vec<u8> {
     json.as_bytes().to_vec()
 }
 
-pub trait ToBytesSerialize {
-    fn serialize(&self) -> Bytes;
+pub trait ToBytesSerialize: Serialize + for<'a> Deserialize<'a> {
+    fn serialize_to_bytes(&self) -> Bytes where Self: Sized {
+        let bytes = serialize(self);
+        let mut buf = BytesMut::new();
+        buf.put_slice(bytes.as_slice());
+        Bytes::from(buf)
+    }
+    fn from_bytes(buf: BytesMut) -> Result<Self> where Self: Sized {
+        let in_string = String::from_utf8(buf[..].to_owned()).unwrap();
+        deserialize::<Self>(&*in_string)
+    }
+
 }
 
 pub trait ToU32IpAddr {

@@ -129,6 +129,15 @@ pub struct Subnet {
     mask: IpMask,
 }
 
+impl From<&str> for Subnet {
+    fn from(value: &str) -> Self {
+        // split the value at /
+        let both = value.split("/").collect::<Vec<&str>>();
+        assert_eq!(both.len(), 2);
+        Subnet::from((both[0], u8::from_str(both[1]).unwrap()))
+    }
+}
+
 impl From<(&str, u8)> for Subnet {
     fn from(value: (&str, u8)) -> Self {
         if value.1 > 32 {

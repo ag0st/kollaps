@@ -14,7 +14,7 @@ mod data;
 // todo: find automatically the local address and speed of auto-negotiation
 
 
-pub async fn run(config: RunnerConfig, cgraph_update: Sender<CGraphUpdate>) -> Result<(), Error> {
+pub async fn run(config: RunnerConfig, cgraph_update: Option<Sender<CGraphUpdate>>) -> Result<(), Error> {
     // Create the controller:
     println!("Creating the controller...");
     let mut controller = Ctrl::build(config).await?;

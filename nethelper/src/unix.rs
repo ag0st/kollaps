@@ -97,7 +97,7 @@ impl<T: Sendable, H: Handler<T>> UnixBinding<T, H> {
     }
 
     async fn write_to_stream(stream: &mut UnixStream, x: T) -> Result<()> {
-        let data = x.serialize();
+        let data = x.serialize_to_bytes();
         stream.write_u16(data.len() as u16).await.unwrap();
         stream.write_all(data.as_ref()).await.or_else(|e| {
             Err(Self::err_producer().wrap(ErrorKind::BadWrite, "Cannot write on the Unix Socket connection", e))

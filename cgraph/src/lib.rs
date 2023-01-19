@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::cmp::min;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -90,6 +91,16 @@ impl<I: Clone + Eq> CGraph<I> {
         self.nodes.clone()
     }
 
+    pub fn map_nodes(&mut self, map: impl Fn(&mut I)) {
+        let mut new_node_set = HashSet::new();
+        for node in &self.nodes {
+            let mut new_node = node.clone();
+            map(&mut new_node.info);
+            new_node_set.insert(new_node);
+        }
+        self.nodes = new_node_set;
+    }
+    
     pub fn size(&self) -> usize {
         self.nodes.len()
     }

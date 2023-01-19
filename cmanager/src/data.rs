@@ -13,13 +13,7 @@ use common::{ClusterNodeInfo, deserialize, Error, ErrorKind, Result, serialize, 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct WCGraph(CGraph<ClusterNodeInfo>);
 
-impl ToBytesSerialize for WCGraph {
-    fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-        buf.put_slice(serialize(&self).as_slice());
-        Bytes::from(buf)
-    }
-}
+impl ToBytesSerialize for WCGraph {}
 
 impl Deref for WCGraph {
     type Target = CGraph<ClusterNodeInfo>;
@@ -149,7 +143,7 @@ impl Event {
 }
 
 impl ToBytesSerialize for Event {
-    fn serialize(&self) -> Bytes {
+    fn serialize_to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put_u16(Event::event_2_opcode(self));
         match self {

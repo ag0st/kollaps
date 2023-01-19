@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ mod tcp;
 const CONTENT_LENGTH_LENGTH: usize = 2;
 const BROADCAST_ADDR: &str = "255.255.255.255";
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0:0";
+pub const ALL_ADDR: &str = "0.0.0.0";
 
 
 // ------------------------------------------------------------------------------------------------
@@ -39,6 +41,51 @@ pub fn handler_box<'a, T: 'a + ToBytesSerialize, E: 'a>(f: impl Fn(BytesMut) -> 
 pub fn handler_once_box<'a, T: 'a + ToBytesSerialize, E: 'a>(f: impl FnOnce(BytesMut) -> E + Sync + Send + 'static) -> ResponderOnce<T>
     where E: Future<Output=Option<T>> + Send + 'static + Sync {
     Box::new(move |n| Box::pin(f(n)))
+}
+
+
+pub struct DefaultHandler<T: Debug> {
+    sender: tokio::sync::mpsc::Sender<MessageWrapper<T>>,
+}
+
+impl<T: Debug + Send> DefaultHandler<T> {
+    pub fn new(sender: tokio::sync::mpsc::Sender<MessageWrapper<T>>) -> Self {
+        DefaultHandler { sender }
+    }
+}
+
+impl<T: ToBytesSerialize + Debug + Send> Clone for DefaultHandler<T> {
+    fn clone(&self) -> Self {
+        DefaultHandler {
+            sender: self.sender.clone()
+        }
+    }
+}
+
+#[async_trait]
+impl<T: ToBytesSerialize + Debug + Send> Handler<T> for DefaultHandler<T> {
+    async fn handle(&mut self, bytes: BytesMut) -> Option<T> {
+        let message = T::from_bytes(bytes).unwrap();
+        // create the channel to get the response from the controller
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // prepare the event to send to the controller:
+        let message = MessageWrapper { message, sender: Some(tx) };
+        self.sender.send(message).await.unwrap();
+        // wait on the response from the controller
+        rx.await.unwrap()
+    }
+}
+
+#[derive(Debug)]
+pub struct MessageWrapper<T: Debug> {
+    pub message: T,
+    pub sender: Option<tokio::sync::oneshot::Sender<Option<T>>>
+}
+
+impl<T: Display + Debug> Display for MessageWrapper<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
 }
 
 #[async_trait]
@@ -116,7 +163,7 @@ fn get_size(buf: Vec<u8>) -> usize {
 
 
 pub fn prepare_data_to_send<T: ToBytesSerialize>(data: T) -> BytesMut {
-    let data = data.serialize();
+    let data = data.serialize_to_bytes();
     // create a buffer to store what we have to send. First we put the content-length (protocol)
     // and then we push the data given to us by the Handler.
     let capacity = CONTENT_LENGTH_LENGTH + data.len();

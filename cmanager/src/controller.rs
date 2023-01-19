@@ -1,6 +1,5 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Display, Formatter};
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
@@ -10,39 +9,14 @@ use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
-use cgraph::CGraphUpdate;
 
+use cgraph::CGraphUpdate;
 use common::{ClusterNodeInfo, Error, ErrorKind, Result};
 use common::RunnerConfig;
-use nethelper::{Handler, handler_once_box, ProtoBinding, Protocol, Responder, TCP, TCPBinding, UDP, UDPBinding};
+use nethelper::{ALL_ADDR, DefaultHandler, Handler, handler_once_box, MessageWrapper, NoHandler, ProtoBinding, Protocol, Responder, TCP, TCPBinding, UDP, UDPBinding};
 
 use crate::data::{CJQResponseKind, Event, WCGraph};
 use crate::perf::PerfCtrl;
-
-#[derive(Clone)]
-struct EventHandler {
-    sender: mpsc::Sender<EventMessage>,
-}
-
-#[async_trait]
-impl Handler<Event> for EventHandler {
-    async fn handle(&mut self, bytes: BytesMut) -> Option<Event> {
-        let event = Event::from_bytes(bytes).unwrap();
-        // create the channel to get the response from the controller
-        let (tx, rx) = oneshot::channel();
-        // prepare the event to send to the controller:
-        let message = EventMessage { event, sender: Some(tx) };
-        self.sender.send(message).await.unwrap();
-        // wait on the response from the controller
-        rx.await.unwrap()
-    }
-}
-
-impl EventHandler {
-    pub fn new(sender: Sender<EventMessage>) -> EventHandler {
-        EventHandler { sender }
-    }
-}
 
 #[derive(Clone)]
 struct HeartBeatHandler {
@@ -69,31 +43,19 @@ impl HeartBeatHandler {
     }
 }
 
-#[derive(Debug)]
-struct EventMessage {
-    event: Event,
-    sender: Option<oneshot::Sender<Option<Event>>>,
-}
-
-impl Display for EventMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.event)
-    }
-}
-
 
 pub struct Ctrl {
-    events_receiver: mpsc::Receiver<EventMessage>,
-    event_sender: Sender<EventMessage>,
+    events_receiver: mpsc::Receiver<MessageWrapper<Event>>,
+    event_sender: Sender<MessageWrapper<Event>>,
     cgraph: WCGraph,
     my_info: ClusterNodeInfo,
     my_speed: usize,
     is_leader: bool,
     adding_new_node: bool,
     perf_ctrl: PerfCtrl,
-    tcp_binding: TCPBinding<Event, EventHandler>,
-    udp_binding: UDPBinding<Event, EventHandler>,
-    event_handler: EventHandler,
+    tcp_binding: TCPBinding<Event, DefaultHandler<Event>>,
+    udp_binding: UDPBinding<Event, DefaultHandler<Event>>,
+    event_handler: DefaultHandler<Event>,
     started: bool,
     config: RunnerConfig,
     heartbeat_misses: HashMap<ClusterNodeInfo, usize>,
@@ -116,15 +78,14 @@ impl Ctrl {
         let perf_ctrl = PerfCtrl::new(ClusterNodeInfo::new(my_ip, config.iperf3_port), config.perf_test_duration_seconds).await;
 
         // Create the main handler for incoming events:
-        let event_handler = EventHandler::new(sender.clone());
+        let event_handler = DefaultHandler::<Event>::new(sender.clone());
         // bind the handler to the UDP and TCP incoming requests
-        let tcp_binding = TCP::bind_addr(("0.0.0.0", config.cmanager_event_port), Some(event_handler.clone()))
+        let tcp_binding = TCP::bind_addr((ALL_ADDR, config.cmanager_event_port), Some(event_handler.clone()))
             .await
             .unwrap();
-        let udp_binding = UDP::bind_addr(("0.0.0.0", config.cmanager_event_port), Some(event_handler.clone()))
+        let udp_binding = UDP::bind_addr((ALL_ADDR, config.cmanager_event_port), Some(event_handler.clone()))
             .await
             .unwrap();
-
 
 
         let my_info = ClusterNodeInfo::new(my_ip, config.cmanager_event_port);
@@ -162,7 +123,7 @@ impl Ctrl {
         }
     }
 
-    pub async fn start(&mut self, cgraph_update: Sender<CGraphUpdate>) -> Result<()> {
+    pub async fn start(&mut self, cgraph_update: Option<Sender<CGraphUpdate>>) -> Result<()> {
         println!("Starting the controller...");
 
         // store the number of retry for joining a cluster
@@ -176,81 +137,55 @@ impl Ctrl {
         } else {
             self.create_cluster()?;
             // notify the cgraph update that there is a new cgraph
-            let _ = cgraph_update.send(CGraphUpdate::New(self.cgraph.graph())).await;
+            let _ = cgraph_update.as_ref().unwrap().send(CGraphUpdate::New(self.cgraph.graph())).await;
         }
 
         while let Some(event) = self.events_receiver.recv().await {
             println!("[EVENT RECEIVED]: {}", event);
             match event {
-                EventMessage { event: Event::CGraphGet, sender: Some(sender) } => {
+                MessageWrapper { message: Event::CGraphGet, sender: Some(sender) } => {
                     // I am in TCP
                     sender.send(Some(Event::CGraphSend(self.cgraph.clone())))
                         .unwrap();
                 }
-                EventMessage { event: Event::CGraphUpdate(graph), sender: Some(sender) } => {
+                MessageWrapper { message: Event::CGraphUpdate(graph), sender: Some(sender) } => {
                     // I am in TCP
+
+                    // We access this portion only if we are the leader
+
                     // The event CGraphUpdate is the last to receive after adding a node,
                     // we are not currently adding a new node.
                     self.adding_new_node = false;
-                    // Todo: Leader changes: it will not go through this because there is no more leader changes
-                    if graph.is_empty() { // means we are not the leader anymore
-                        println!("[CGRAPH UPDATE]: I am not the leader anymore, stopping heartbeat check...");
-                        self.is_leader = false;
-                        // verify that we are not making a heartbeat
-                    } else {
-                        println!("[CGRAPH UPDATE]: I am the leader of the cluster");
-
-                        let was_leader = self.is_leader;
-                        self.cgraph = graph;
-                        
-                        // Todo: Leader changes: Reactive it if you want leader changes
-                        // self.update_is_leader();
-
-                        // Todo: Leader changes: it will not go through this because there is no more leader changes
-                        // if I am the leader, begin to send HeartBeat if I wasn't
-                        if self.is_leader && !was_leader {
-                            println!("[CGRAPH UPDATE]: I am a new leader, starting heartbeat check...");
-                            self.send_event_after(Duration::from_secs(1), Event::CHeartbeatCheck);
-                        }
-                        
-                        // Send the update of the cgraph
-                        // we do not care if we succeeded to send the update, this is not our problem.
-                        let _ = cgraph_update.send(CGraphUpdate::New(self.cgraph.graph())).await;
-                    }
+                    // Updating the graph
+                    self.cgraph = graph;
+                    // Send the update of the cgraph
+                    // we do not care if we succeeded to send the update, this is not our problem.
+                    let _ = cgraph_update.as_ref().unwrap().send(CGraphUpdate::New(self.cgraph.graph())).await;
                     // nothing to send back
                     sender.send(None).unwrap();
                 }
-                EventMessage { event: Event::CJQResponse(kind), sender: None } => {
+                MessageWrapper { message: Event::CJQResponse(kind), sender: None } => {
                     // This is an internal call forwarded by the method who sends the request
 
-                    // When receiving a response, the number of retries is reset
+                    // When receiving a response, the number of retries is reset, retries
+                    // qualifying the send without answers (lost packets).
                     cjq_request_remaining_retries = self.config.cjq_retry;
 
                     match kind {
                         CJQResponseKind::Accepted((info, cluster_id)) => {
-                            // Check if I am the leader. It can happens if I receive an
-                            // accept after the timeout
-                            // If it is the case, prioritize joining another cluster
-                            self.is_leader = false;
-
-
+                            // We have been accepted by the cluster
                             match self.add_myself_in_cluster(info.clone()).await {
-                                Ok(response) => {
-                                    println!("[CLUSTER ADD]: Finish adding myself in the cluster");
+                                Ok(cgraph_update_event) => {
                                     // SWITCH TO TCP
                                     TCP::bind(Some(self.event_handler.clone()))
                                         .await?
-                                        .send_to(response, info).await.unwrap();
+                                        .send_to(cgraph_update_event, info).await.unwrap();
 
                                     self.cluster_id = Some(uuid::Uuid::parse_str(&*cluster_id).unwrap());
-                                    if self.is_leader {
-                                        println!("[CLUSTER ADD]: I am the new leader of the cluster, starting Heartbeat");
-                                        self.perform_heartbeat_check().unwrap();
-                                    }
                                 }
                                 Err(e) => {
-                                    println!("[CLUSTER ADD]: Error adding myself in the cluster, sending an ABORT. Error: {}", e);
-                                    let mut binding: TCPBinding<Event, Responder<Event>> = TCP::bind(None).await.unwrap();
+                                    eprintln!("[CLUSTER ADD]: Error adding myself in the cluster, sending an ABORT. Error: {}", e);
+                                    let mut binding: TCPBinding<Event, NoHandler> = TCP::bind(None).await.unwrap();
                                     binding.send_to(Event::CJQAbort, info).await.unwrap();
 
                                     println!("[CLUSTER ADD]: Waiting a bit and then retry");
@@ -265,7 +200,7 @@ impl Ctrl {
                         }
                     }
                 }
-                EventMessage { event: Event::CJQRequest(info), sender: Some(sender) } => {
+                MessageWrapper { message: Event::CJQRequest(info), sender: Some(sender) } => {
                     // I am in UDP
                     if self.is_leader {
                         if self.adding_new_node { // we are currently adding a new node
@@ -291,24 +226,22 @@ impl Ctrl {
                         sender.send(None).unwrap() // do not answer.
                     }
                 }
-                EventMessage { event: Event::CJQAbort, sender: Some(sender) } => {
+                MessageWrapper { message: Event::CJQAbort, sender: Some(sender) } => {
                     self.adding_new_node = false;
                     sender.send(None).unwrap();
                 }
-                EventMessage { event: Event::CJQRetry, sender: None } => {
+                MessageWrapper { message: Event::CJQRetry, sender: None } => {
                     // retry to join
                     if cjq_request_remaining_retries > 0 {
                         println!("[CJQ RETRY]: Remaining retries: {}", cjq_request_remaining_retries);
                         cjq_request_remaining_retries = cjq_request_remaining_retries - 1;
                         self.send_cluster_joining_request().await?;
                     } else {
-                        println!("[CJQ RETRY]: No more retries, create my own cluster");
-                        self.create_cluster()?;
-                        // notify that there is a new cluster
-                        let _ = cgraph_update.send(CGraphUpdate::New(self.cgraph.graph())).await;
+                        println!("[CJQ RETRY]: No more retries, I didn't found a cluster in the subnet, stopping...");
+                        return Err(Error::new("cjq retry", ErrorKind::NoResource, "Didn't found a cluster in the subnet"));
                     }
                 }
-                EventMessage { event: Event::CHeartbeat((_, other)), sender: Some(sender) } => {
+                MessageWrapper { message: Event::CHeartbeat((_, other)), sender: Some(sender) } => {
                     if let Ok(other_id) = uuid::Uuid::parse_str(&*other) {
                         if let Some(cid) = self.cluster_id {
                             if cid == other_id {
@@ -320,7 +253,9 @@ impl Ctrl {
                     }
                     sender.send(None).unwrap();
                 }
-                EventMessage { event: Event::NodeFailure(info), sender: Some(sender) } => {
+                MessageWrapper { message: Event::NodeFailure(info), sender: Some(sender) } => {
+                    // Here only if we are the leader
+
                     if let Some(missed_heartbeat) = self.heartbeat_misses.get(&info) {
                         let missed_heartbeat = missed_heartbeat.clone();
                         if missed_heartbeat + 1 >= self.config.heartbeat_misses {
@@ -328,16 +263,9 @@ impl Ctrl {
                             let previous_size = self.cgraph.size();
                             self.cgraph.remove_one_by(|n| n.info().eq(&info)).unwrap();
                             assert_eq!(previous_size - 1, self.cgraph.size());
-                            if previous_size - 1 != self.cgraph.size() || self.cgraph.nodes().iter()
-                                .map(|n| n.info())
-                                .collect::<HashSet<ClusterNodeInfo>>()
-                                .contains(&info) {
-                                eprintln!("[NODE FAILURE]: Issue removing a node from the CGraph");
-                            }
                             self.heartbeat_misses.remove(&info).unwrap();
-                            
                             // Notify that the CGraph has changed
-                            let _ = cgraph_update.send(CGraphUpdate::Remove(info.clone())).await;
+                            let _ = cgraph_update.as_ref().unwrap().send(CGraphUpdate::Remove(info.clone())).await;
                         } else {
                             // increment the number of missed heartbeats, must be present, so unwrap
                             self.heartbeat_misses.insert(info, missed_heartbeat + 1).unwrap();
@@ -345,22 +273,21 @@ impl Ctrl {
                     } else {
                         self.heartbeat_misses.insert(info, 1);
                     }
-
-                    // send back the updated CGraph
+                    // Tell that we finished, synchro
                     sender.send(None).unwrap();
                 }
-                EventMessage { event: Event::CHeartbeatReset, sender: Some(sender) } => {
+                MessageWrapper { message: Event::CHeartbeatReset, sender: Some(sender) } => {
                     // reset all the heartbeat counts
                     self.heartbeat_misses.clear();
                     sender.send(None).unwrap();
                 }
-                EventMessage { event: Event::CHeartbeatCheck, sender: None } => {
+                MessageWrapper { message: Event::CHeartbeatCheck, sender: None } => {
                     // If I am the leader, execute the Heartbeat check, if not, it will stops the loop.
                     if self.is_leader {
                         self.perform_heartbeat_check().unwrap();
                     }
                 }
-                EventMessage { event: Event::PClient, sender: Some(sender) } => {
+                MessageWrapper { message: Event::PClient, sender: Some(sender) } => {
                     println!("[PERF]: Received perf request, starting the server...");
                     self.perf_ctrl.launch_server().await?;
                     println!("[PERF]: Server started");
@@ -426,7 +353,7 @@ impl Ctrl {
             // Ask to clear the missed heartbeat map if the node has rejoined the cluster
             if remaining.is_empty() {
                 let (tx, rx) = oneshot::channel::<Option<Event>>();
-                let mess = EventMessage { event: Event::CHeartbeatReset, sender: Some(tx) };
+                let mess = MessageWrapper { message: Event::CHeartbeatReset, sender: Some(tx) };
                 event_sender.send(mess).await.unwrap();
                 rx.await.unwrap();
             }
@@ -436,9 +363,9 @@ impl Ctrl {
                 // force waiting on the removal of the node to make full synchronization
                 // before restarting a loop of Heartbeat Check. This is a security.
                 let (tx, rx) = oneshot::channel::<Option<Event>>();
-                let mess = EventMessage { event: Event::NodeFailure(failed_node.clone()), sender: Some(tx) };
+                let mess = MessageWrapper { message: Event::NodeFailure(failed_node.clone()), sender: Some(tx) };
                 event_sender.send(mess).await.unwrap();
-                // wait for the updated CGraph
+                // wait for the controller to finish deleting the node, good to synchro
                 rx.await.unwrap();
             }
 
@@ -466,7 +393,7 @@ impl Ctrl {
         // This new binding will only intercept the CJQ Response and when it intercepts one, it
         // forwards it to the main event queue.
         let (sender, mut receiver) = mpsc::channel(self.config.event_channel_size);
-        let handler = EventHandler::new(sender);
+        let handler = DefaultHandler::<Event>::new(sender);
 
         let mut binding = UDP::bind(Some(handler)).await?;
         binding.listen()?;
@@ -480,9 +407,9 @@ impl Ctrl {
         let waiting_on_response = async move {
             while let Some(event_msg) = receiver.recv().await {
                 match event_msg {
-                    EventMessage { event: Event::CJQResponse(kind), sender: Some(sender) } => {
+                    MessageWrapper { message: Event::CJQResponse(kind), sender: Some(sender) } => {
                         println!("[CJQ REQUEST]: Received response, forwarding it");
-                        event_sender.send(EventMessage { event: Event::CJQResponse(kind), sender: None })
+                        event_sender.send(MessageWrapper { message: Event::CJQResponse(kind), sender: None })
                             .await
                             .unwrap();
                         // send nothing back on the network
@@ -498,7 +425,7 @@ impl Ctrl {
         // Wrap the future with a `Timeout`.
         if let Err(_) = tokio::time::timeout(Duration::from_secs(self.config.cjq_timeout_duration_seconds), waiting_on_response).await {
             println!("[CJQ REQUEST]: Timeout occurred");
-            self.event_sender.send(EventMessage { event: Event::CJQRetry, sender: None }).await.unwrap();
+            self.event_sender.send(MessageWrapper { message: Event::CJQRetry, sender: None }).await.unwrap();
         }
         Ok(())
     }
@@ -507,26 +434,19 @@ impl Ctrl {
         Ctrl::send_event_after_chan(self.event_sender.clone(), duration, event)
     }
 
-    fn send_event_after_chan(sender: mpsc::Sender<EventMessage>, duration: Duration, event: Event) {
+    fn send_event_after_chan(sender: Sender<MessageWrapper<Event>>, duration: Duration, event: Event) {
         tokio::spawn(async move {
             sleep(duration).await;
             // prepare the event to send to the controller:
-            let message = EventMessage { event, sender: None };
+            let message = MessageWrapper { message: event, sender: None };
             sender.send(message).await.unwrap();
         });
-    }
-
-    fn update_is_leader(&mut self) {
-        let current_leader = self.cgraph.find_leader().unwrap();
-        // check if I still the leader
-        self.is_leader = current_leader.info()
-            .eq(self.my_info.clone().borrow());
     }
 
     async fn add_myself_in_cluster(&mut self, leader_info: ClusterNodeInfo) -> Result<Event> {
         println!("[CLUSTER ADD]: Adding myself in the cluster. The leader is: {}", leader_info);
         // We are going to download the CGraph via TCP this time
-        let mut conn: TCPBinding<Event, Responder<Event>> = TCP::bind(None).await?;
+        let mut conn: TCPBinding<Event, NoHandler> = TCP::bind(None).await?;
         conn.send_to(Event::CGraphGet, leader_info.clone()).await?;
         println!("[CLUSTER ADD]: CGraphGet request sent to the leader");
         let (tx, rx) = oneshot::channel::<WCGraph>();
@@ -557,42 +477,11 @@ impl Ctrl {
                 println!("[CLUSTER ADD]: Completion of the graph finished");
                 // Now we made the tests with all the others, check if we are the leader
                 Ok(Event::CGraphUpdate(self.cgraph.clone()))
-                // Todo: Leader changes: Reactivate the lines bellow for leader changes and deactivate the line above
-                // self.update_is_leader();
-                // 3 cases scenarios now:
-                // 1. The old leader still the leader
-                // 2. We are the new leader
-                // 3. Another node became the new leader
-                // let current_leader = self.cgraph.find_leader()?;
-                // if current_leader.info().eq(&leader_info.clone()) {
-                //     println!("[CLUSTER ADD]: The old leader still the leader");
-                //     self.is_leader = false;
-                //     // The old leader stay the leader, send him update of the cgraph
-                //     Ok(Event::CGraphUpdate(self.cgraph.clone()))
-                // } else if current_leader.info().eq(&self.my_info.clone()) {
-                //     println!("[CLUSTER ADD]: I am the new leader");
-                //     // I am the new leader, send him update with empty cgraph
-                //     self.is_leader = true;
-                //     Ok(Event::CGraphUpdate(WCGraph::new()))
-                // } else {
-                //     println!("[CLUSTER ADD]: The new leader is {}", current_leader.info());
-                //     self.is_leader = false;
-                //     // Inform the new leader that he is the new leader by sending him
-                //     // a complete CGraph
-                //     let mut binding: TCPBinding<Event, Responder<Event>> = TCP::bind(None)
-                //         .await?;
-                //     binding.send_to(
-                //         Event::CGraphUpdate(self.cgraph.clone()),
-                //         current_leader.info())
-                //         .await?;
-                //     // Another person is leader, send to the leader empty cgraph
-                //     Ok(Event::CGraphUpdate(WCGraph::new()))
-                // }
             }
             Err(e) => {
                 Err(Error::wrap("cluster add",
-                    ErrorKind::NoResource,
-                    "Failed to get the CGraph from the distant server", e))
+                                ErrorKind::NoResource,
+                                "Failed to get the CGraph from the distant server", e))
             }
         }
     }
