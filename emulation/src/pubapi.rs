@@ -14,7 +14,8 @@ use crate::xmlgraphparser::parse_topology;
 
 
 pub struct OrchestrationManager {
-    my_info: ClusterNodeInfo,
+    my_info_controller: ClusterNodeInfo,
+    my_info_leader: ClusterNodeInfo,
     local_sender: Sender<MessageWrapper<ControllerMessage>>,
     orchestrator: Orchestrator,
     cgraph_update_receiver: Receiver<CGraphUpdate>,
@@ -26,24 +27,31 @@ impl OrchestrationManager {
                                  cgraph_update_receiver: Receiver<CGraphUpdate>, connection_port: u16,
                                  controllers_port: u16, original_cgraph: CGraph<ClusterNodeInfo>)
                                  -> Result<()> {
+        let mut my_info_controller = my_info.clone();
+        my_info_controller.port = controllers_port;
+
+        let mut my_info_leader = my_info.clone();
+        my_info_leader.port = connection_port;
+
         let manager = OrchestrationManager {
-            my_info,
+            my_info_controller,
+            my_info_leader,
             local_sender,
             orchestrator: Orchestrator::new(original_cgraph, controllers_port),
             cgraph_update_receiver,
             emulations_and_their_nodes: HashMap::new(),
         };
-        manager.accept_topology(connection_port).await
+        manager.accept_topology().await
     }
 
 
-    async fn accept_topology(mut self, connections_port: u16) -> Result<()> {
+    async fn accept_topology(mut self) -> Result<()> {
         let (sender, mut receiver) = mpsc::channel(10);
         // Create the handler
         let handler = DefaultHandler::<TopologyMessage>::new(sender);
 
         // listen on TCP
-        let mut binding = TCP::bind_addr((ALL_ADDR, connections_port), Some(handler)).await.unwrap();
+        let mut binding = TCP::bind_addr((ALL_ADDR, self.my_info_leader.port), Some(handler)).await.unwrap();
         binding.listen().unwrap();
 
         loop {
@@ -73,7 +81,7 @@ impl OrchestrationManager {
             for node in self.emulations_and_their_nodes.get(&uuid).unwrap() {
                 // Send an abort for this
                 let m = mess.clone();
-                if self.my_info.eq(node) {
+                if self.my_info_controller.eq(node) {
                     self.local_sender.send(MessageWrapper { message: m, sender: None }).await
                         .expect(&*format!("[WARNING]: Wanted to abort emulation {} on local machine, error", uuid.to_string()));
                 } else {
@@ -117,6 +125,12 @@ impl OrchestrationManager {
                     }
                 }
             }
+            MessageWrapper { message: TopologyMessage::Abort(id), sender: Some(sender) } => {
+                // We receive an abort, we need to stop this emulation
+                let id = Uuid::parse_str(&*id).unwrap();
+                let uuids = vec![id];
+                self.abort_emulations(uuids).await;
+            }
             MessageWrapper { message: _message, sender: Some(sender) } => {
                 let _ = sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::BadFile("You need to send file via NewTopology enumeration".to_string()))));
             }
@@ -131,12 +145,13 @@ impl OrchestrationManager {
         let leader = nodes[0].clone();
         let emul = Emulation::build(uuid, &network, &events, leader);
         // Create the message for the different cluster nodes
-        let mess = ControllerMessage::EmulationStart(emul.clone());
+        // Send my info leader for them to contact me if there is something bad happening with an emulation
+        let mess = ControllerMessage::EmulationStart(self.my_info_leader.clone(), emul.clone());
         // Send the topology to all concerned cluster nodes
         for i in 0..nodes.len() {
             // If affected to me, directly send it through the local_sender
             let m = mess.clone();
-            if let Err(_) = if nodes[i] == self.my_info {
+            if let Err(_) = if nodes[i] == self.my_info_controller {
                 if let Err(e) = self.local_sender.send(MessageWrapper { message: m, sender: None }).await {
                     return Err(Error::wrap("send start emulation", ErrorKind::CommandFailed, "cannot send new topology to local node", e));
                 }

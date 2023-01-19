@@ -209,7 +209,7 @@ impl EmulCore {
                                 // kill the container app if exists, and if we control the life cycle
                                 let n = node.clone();
                                 let d = dock.clone();
-                                stop_app_if_necessary(n, d).await.unwrap()
+                                stop_app_if_necessary(n, d).await?
                             }
                             AppStatus::Crashed => {} // Already crashed
                         }
@@ -276,7 +276,7 @@ impl EmulCore {
 
 
                             // Finally as it runs on our machine, update the others
-                            broadcast_flow(&flow_conf, &this.other_hosts, this.emul_id.clone()).await;
+                            broadcast_flow(&flow_conf, &this.other_hosts, this.emul_id.clone()).await?;
                         }
                     }
                 }
@@ -320,16 +320,16 @@ impl EmulCore {
                             }
                             EventAction::Quit => {
                                 // remove all flows associated with him
-                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &node, &this.graph, &this.other_hosts, this.emul_id.clone()).await;
+                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &node, &this.graph, &this.other_hosts, this.emul_id.clone()).await?;
                                 // Send the disconnect
                                 tc_socket.send(EmulMessage::TCDisconnect).await?;
                                 *status = AppStatus::Stopped;
                             }
                             EventAction::Crash => {
-                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &node, &this.graph, &this.other_hosts, this.emul_id.clone()).await;
+                                (active_flows, bw_graph) = Self::remove_all_flows_from(active_flows, bw_graph, &node, &this.graph, &this.other_hosts, this.emul_id.clone()).await?;
                                 tc_socket.send(EmulMessage::TCDisconnect).await?;
                                 // kill the container app if exists, and if we control the life cycle
-                                stop_app_if_necessary(node.clone(), dock.clone()).await.unwrap();
+                                stop_app_if_necessary(node.clone(), dock.clone()).await?;
                                 *status = AppStatus::Crashed
                             }
                         }
@@ -351,6 +351,8 @@ impl EmulCore {
                 break;
             }
         }
+        // remove myself from the channels
+        this.emul_id_to_channel.lock().await.remove_entry(&this.emul_id);
         Ok(())
     }
 
@@ -374,7 +376,7 @@ impl EmulCore {
                     }
                     if number_of_events_remaining == 0 {
                         // Everybody is ready to rock, send start
-                        let begin_time = broadcast_ready(&this.other_hosts, this.emul_id.clone(), start_in_future).await;
+                        let begin_time = broadcast_ready(&this.other_hosts, this.emul_id.clone(), start_in_future).await?;
                         sleep_until(tokio::time::Instant::from(begin_time)).await;
                     }
                 }
@@ -397,7 +399,7 @@ impl EmulCore {
         Ok(())
     }
 
-    async fn remove_all_flows_from<'a>(mut active_flows: HashSet<Flow<'a, Node>>, mut bw_graph: Network<Node>, node: &Node, graph: &Network<Node>, other_hosts: &HashSet<ClusterNodeInfo>, emul_id: Uuid) -> (HashSet<Flow<'a, Node>>, Network<Node>) {
+    async fn remove_all_flows_from<'a>(mut active_flows: HashSet<Flow<'a, Node>>, mut bw_graph: Network<Node>, node: &Node, graph: &Network<Node>, other_hosts: &HashSet<ClusterNodeInfo>, emul_id: Uuid) -> Result<(HashSet<Flow<'a, Node>>, Network<Node>)> {
         let to_remove = active_flows.iter()
             .filter(|f| f.source == node)
             .map(|flow| (FlowConf {
@@ -413,39 +415,40 @@ impl EmulCore {
                 (active_flows, bw_graph) = remove_flow(active_flows, &f, graph);
             }
             // Tell the others that this flow does not exists anymore
-            broadcast_flow(&fc, other_hosts, emul_id).await;
+            broadcast_flow(&fc, other_hosts, emul_id).await?;
         }
 
-        (active_flows, bw_graph)
+        Ok((active_flows, bw_graph))
     }
 }
 
 
 
 
-async fn broadcast_ready(destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid, future: Duration) -> Instant {
+async fn broadcast_ready(destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid, future: Duration) -> Result<Instant> {
     let begin_time = Instant::now().add(future);
     let emul_begin_time = EmulBeginTime { time: begin_time };
     for host in destination {
         // Here when sending the information to the others, wrap our message with our uuid,
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
-        let mut bind: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+        let mut bind: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await?;
         let wrapper = ControllerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::EmulStart(emul_begin_time.clone()));
-        bind.send_to(wrapper, host.clone()).await.unwrap()
+        bind.send_to(wrapper, host.clone()).await?
     }
-    begin_time
+    Ok(begin_time)
 }
 
-async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid) {
+async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid) -> Result<()> {
     for host in destination {
         // Here when sending the information to the others, wrap our message with our uuid,
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
-        let mut bind: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+        let mut bind: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await?;
         let wrapper = ControllerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::FlowUpdate(flow.clone()));
-        bind.send_to(wrapper, host.clone()).await.unwrap()
+        bind.send_to(wrapper, host.clone()).await?
     }
+    Ok(())
 }
 
 /// Starts a reporter process for the application regarding the application kind.
@@ -471,7 +474,7 @@ async fn launch_reporter_for_app(emul_id: Uuid, app: &Application, dock: &Docker
             match config.image() {
                 None => panic!("Connecting to an existing container is not supported yet!"),
                 Some(_) => {
-                    start_container_and_get_pid(config.clone(), dock, app.ip_addr()).await.unwrap()
+                    start_container_and_get_pid(config.clone(), dock, app.ip_addr()).await?
                 }
             }
         }
@@ -521,7 +524,7 @@ async fn stop_app_if_necessary(node: Node, dock: DockerHelper) -> Result<()> {
                 Some(_) => {
                     // We kill the container, because we started it
                     let name = &*config.name();
-                    dock.stop_container(name).await.unwrap();
+                    dock.stop_container(name).await?;
                 }
             }
         }

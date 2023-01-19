@@ -9,9 +9,9 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
 use cgraph::CGraphUpdate;
-use common::{ClusterNodeInfo, EmulMessage, Error, ErrorKind, Result, RunnerConfig, Subnet};
+use common::{ClusterNodeInfo, EmulMessage, Error, ErrorKind, Result, RunnerConfig, Subnet, TopologyMessage};
 use dockhelper::DockerHelper;
-use nethelper::{ALL_ADDR, DefaultHandler, MessageWrapper, ProtoBinding, Protocol, TCP};
+use nethelper::{ALL_ADDR, DefaultHandler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding};
 
 use crate::data::{ControllerMessage, Emulation};
 use crate::emulcore::EmulCore;
@@ -81,13 +81,13 @@ impl Controller {
         // Now wait on incoming requests
         while let Some(message) = receiver.recv().await {
             match message {
-                MessageWrapper { message: ControllerMessage::EmulationStart(emul), sender: Some(sender) } => {
-                    self.start_emulation(emul, self.dock.clone()).await.unwrap();
+                MessageWrapper { message: ControllerMessage::EmulationStart(leader, emul), sender: Some(sender) } => {
+                    self.start_emulation(emul, self.dock.clone(), leader).await.unwrap();
                     sender.send(None).unwrap();
                 }
-                MessageWrapper { message: ControllerMessage::EmulationStart(emul), sender: None } => {
+                MessageWrapper { message: ControllerMessage::EmulationStart(leader, emul), sender: None } => {
                     // coming directly from me because I am the leader
-                    self.start_emulation(emul, self.dock.clone()).await.unwrap();
+                    self.start_emulation(emul, self.dock.clone(), leader).await.unwrap();
                 }
                 MessageWrapper { message: ControllerMessage::EmulCoreInterchange(id, mess), sender: Some(sender) } => {
                     let id = Uuid::parse_str(&*id).unwrap();
@@ -115,18 +115,26 @@ impl Controller {
         Ok(())
     }
 
-    async fn start_emulation(&mut self, emul: Emulation, dock: DockerHelper) -> Result<()> {
+    async fn start_emulation(&mut self, emul: Emulation, dock: DockerHelper, leader: ClusterNodeInfo) -> Result<()> {
         // Clone for the emulation for moving
         let me = self.myself.clone();
         let reporter_path = self.config.reporter_exec_path.clone();
         let emul_id_to_chan = self.emul_id_to_channel.clone();
+        let emul_id = emul.uuid();
         tokio::spawn(async move {
-            let mut emulcore = Box::pin(EmulCore::new(emul, me, emul_id_to_chan));
-            let d = dock.clone();
-            emulcore.as_mut().start_emulation(d, reporter_path).await.unwrap();
-            // Now, the emulcores must synchronize between themself
-            emulcore.as_mut().synchronize(Duration::from_secs(2)).await.unwrap();
-            emulcore.as_mut().flow_loop(dock).await.unwrap();
+            if let Err(e) = async {
+                let mut emulcore = Box::pin(EmulCore::new(emul, me, emul_id_to_chan));
+                let d = dock.clone();
+                emulcore.as_mut().start_emulation(d, reporter_path).await?;
+                // Now, the emulcores must synchronize between themself
+                emulcore.as_mut().synchronize(Duration::from_secs(2)).await?;
+                emulcore.as_mut().flow_loop(dock).await?;
+                Ok::<_, Error>(())
+            }.await {
+                // An error occurred, we need to notify the leader
+                let mut bind: TCPBinding<TopologyMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                bind.send_to(TopologyMessage::Abort(emul_id.to_string()), leader).await.unwrap();
+            }
         });
         Ok(())
     }

@@ -7,6 +7,7 @@ pub enum TopologyMessage {
     NewTopology(String),
     Accepted,
     Rejected(TopologyRejectReason),
+    Abort(String)
 }
 
 impl Display for TopologyMessage {
@@ -15,6 +16,7 @@ impl Display for TopologyMessage {
             TopologyMessage::NewTopology(_) => write!(f, "New topology request"),
             TopologyMessage::Accepted => write!(f, "Topology Accepted"),
             TopologyMessage::Rejected(reason) => write!(f, "Your topology submission has been rejected. Reason: {}", reason),
+            TopologyMessage::Abort(id) => write!(f, "Emulation {} aborted", id),
         }
     }
 }

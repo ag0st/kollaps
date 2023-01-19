@@ -297,7 +297,7 @@ impl<'a, T: netgraph::Vertex> Flow<'a, T> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ControllerMessage {
     EmulCoreInterchange(String, EmulMessage),
-    EmulationStart(Emulation),
+    EmulationStart(ClusterNodeInfo, Emulation),
     EmulationStop(String),
 }
 
@@ -305,7 +305,7 @@ impl Display for ControllerMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ControllerMessage::EmulCoreInterchange(id, mess) => write!(f, "EmulInterchange for {}: {}", id, mess),
-            ControllerMessage::EmulationStart(emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
+            ControllerMessage::EmulationStart(ClusterNodeInfo, emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
             ControllerMessage::EmulationStop(uuid) => write!(f, "EmulationStop of {}", uuid),
         }
     }
