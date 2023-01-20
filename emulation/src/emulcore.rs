@@ -222,9 +222,10 @@ impl EmulCore {
                     // Get the concerned application based on their ip addr
                     // For now, only consider flow inside the emulation
                     if let (Some(src), Some(dest)) = (this.ip_to_app.get(&flow_conf.src), this.ip_to_app.get(&flow_conf.dest)) {
+                        println!("Flow updated between {} and {}", src, dest);
                         // Get the defined properties (by the topology) of the path between the source of the flow and the destination.
                         let (max_bandwidth, drop, latency_jitter) = this.graph.properties_between(src, dest)
-                            .expect("New flow between applications that do not have a connection!?");
+                            .expect(&*format!("New flow between applications that do not have a connection!?: {} -> {}", src, dest));
 
                         // We can calculate the target bandwidth to be the min between allowed and the asked bandwidth
                         // If the flowConf.throughput == None, it means that the flow ended and so, the target bandwidth = 0
@@ -367,7 +368,7 @@ impl EmulCore {
             // wait on other responses
             let mut number_of_events_remaining = this.other_hosts.len();
             if number_of_events_remaining > 0 {
-                if let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
+                while let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
                     match event {
                         EmulMessage::EmulStart(_) => number_of_events_remaining -= 1,
                         _ =>{
@@ -378,6 +379,7 @@ impl EmulCore {
                         // Everybody is ready to rock, send start
                         let begin_time = broadcast_ready(&this.other_hosts, this.emul_id.clone(), start_in_future).await?;
                         sleep_until(tokio::time::Instant::from(begin_time)).await;
+                        break
                     }
                 }
             }

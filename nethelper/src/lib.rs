@@ -72,14 +72,20 @@ impl<T: ToBytesSerialize + Debug + Send> Handler<T> for DefaultHandler<T> {
         let message = MessageWrapper { message, sender: Some(tx) };
         self.sender.send(message).await.unwrap();
         // wait on the response from the controller
-        rx.await.unwrap()
+        match rx.await {
+            Err(_) => {
+                eprintln!("Default handler for panic on waiting on oneshot receiver");
+                None
+            }
+            Ok(v) => v
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct MessageWrapper<T: Debug> {
     pub message: T,
-    pub sender: Option<tokio::sync::oneshot::Sender<Option<T>>>
+    pub sender: Option<tokio::sync::oneshot::Sender<Option<T>>>,
 }
 
 impl<T: Display + Debug> Display for MessageWrapper<T> {

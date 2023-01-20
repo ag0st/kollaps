@@ -1,8 +1,8 @@
 <experiment boot="kollaps:1.0">
     <services>
-        <service kind="container" ip="192.168.1.200" name="c1" image="alpine" command="/bin/sh"/>
-        <service kind="container" ip="192.168.1.201" name="c2" image="alpine" command="/bin/sh"/>
-        <service kind="container" ip="192.168.1.202" name="c3" image="alpine" command="/bin/sh"/>
+        <service kind="container" ip="192.168.1.200" name="c1" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.1.201" name="c2" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.1.202" name="c3" image="kollaps-iperf:1.0" command="/bin/sh"/>
     </services>
     <bridges>
         <bridge name="s1"/>

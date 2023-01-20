@@ -122,7 +122,7 @@ impl Controller {
         let emul_id_to_chan = self.emul_id_to_channel.clone();
         let emul_id = emul.uuid();
         tokio::spawn(async move {
-            if let Err(e) = async {
+            if let Err(error) = async {
                 let mut emulcore = Box::pin(EmulCore::new(emul, me, emul_id_to_chan));
                 let d = dock.clone();
                 emulcore.as_mut().start_emulation(d, reporter_path).await?;
@@ -132,8 +132,10 @@ impl Controller {
                 Ok::<_, Error>(())
             }.await {
                 // An error occurred, we need to notify the leader
+                eprintln!("Error occured when instatiating the emulation: {}", error);
                 let mut bind: TCPBinding<TopologyMessage, NoHandler> = TCP::bind(None).await.unwrap();
                 bind.send_to(TopologyMessage::Abort(emul_id.to_string()), leader).await.unwrap();
+
             }
         });
         Ok(())

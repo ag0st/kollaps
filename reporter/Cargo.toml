@@ -9,6 +9,7 @@ build = "build.rs"
 [dependencies]
 common = { path = "../common" }
 nethelper = { path = "../nethelper" }
+monitor = { path = "../monitor" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1.59"
 clap = { version = "3.2.23", features = ["derive"] }

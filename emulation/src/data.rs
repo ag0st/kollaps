@@ -130,7 +130,7 @@ impl Application {
 
 impl Display for Application {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[APP {}] Service IP {} \t Host IP {} \t", self.name, self.host.as_ref().unwrap(), self.ip_app.unwrap())
+        write!(f, "[APP {}] IP {} \t Host {} \t", self.name, self.ip_app.unwrap(), self.host.as_ref().unwrap())
     }
 }
 

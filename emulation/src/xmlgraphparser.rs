@@ -140,7 +140,7 @@ pub fn parse_services(services: Node, emul_id: Uuid, nodes: &mut HashMap<String,
                                 None
                             };
                             let kind = ApplicationKind::Container(
-                                ContainerConfig::new(produce_name_for_container(emul_id, 0),
+                                ContainerConfig::new(produce_name_for_container(emul_id, current_node),
                                                      None,
                                                      Some((service.attribute("image").unwrap().to_string(), command)),
                                 ));

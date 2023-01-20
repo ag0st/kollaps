@@ -1,6 +1,6 @@
 use std::{fs, ptr};
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -16,13 +16,13 @@ use redbpf::load::{Loaded, Loader};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
-use common::{FlowConf, ReporterConfig, EmulMessage, ToU32IpAddr};
+use common::{FlowConf, ReporterConfig, EmulMessage, ToU32IpAddr, ToBytesSerialize};
 use common::EmulMessage::{FlowUpdate};
 use error::{Error, Result};
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
 
-use crate::data::Message;
-use crate::data::MonitorIpAddr;
+use monitor::usage::Message;
+use monitor::usage::MonitorIpAddr;
 use crate::tc_manager::TCManager;
 
 pub mod error;
@@ -57,28 +57,32 @@ impl Handler<EmulMessage> for TCHandler {
     async fn handle(&mut self, bytes: BytesMut) -> Option<EmulMessage> {
         if let Ok(mess) = EmulMessage::from_bytes(bytes) {
             match mess {
-                EmulMessage::TCInit(conf) => self.manager.lock().ok()?.init(conf.dest.to_u32().unwrap()),
+                EmulMessage::TCInit(conf) => {
+                    let dest_u32 = conf.dest.to_u32().unwrap().to_be();
+                    self.manager.lock().ok()?.init(dest_u32)
+                },
                 EmulMessage::TCUpdate(conf) => {
+                    let dest_u32 = conf.dest.to_u32().unwrap().to_be();
                     let manager = self.manager.lock().ok()?;
-                    if self.initialized_path.lock().ok()?.contains(&conf.dest.to_u32().unwrap()) {
+                    if self.initialized_path.lock().ok()?.contains(&dest_u32) {
                         if let Some(bw) = conf.bandwidth_kbitps {
-                            manager.change_bandwidth(conf.dest.to_u32().unwrap(), bw);
+                            manager.change_bandwidth(dest_u32, bw);
                         }
                         if let Some((lat, jit)) = conf.latency_and_jitter {
-                            manager.change_latency(conf.dest.to_u32().unwrap(), lat, jit);
+                            manager.change_latency(dest_u32, lat, jit);
                         }
                         if let Some(drop) = conf.drop {
-                            manager.change_loss(conf.dest.to_u32().unwrap(), drop);
+                            manager.change_loss(dest_u32, drop);
                         }
                     } else {
                         manager
                             .initialize_path(
-                                conf.dest.to_u32().unwrap(),
+                                dest_u32,
                                 conf.bandwidth_kbitps.unwrap(),
                                 conf.latency_and_jitter.unwrap().0,
                                 conf.latency_and_jitter.unwrap().1,
                                 conf.drop.unwrap());
-                        self.initialized_path.lock().ok()?.insert(conf.dest.to_u32().unwrap());
+                        self.initialized_path.lock().ok()?.insert(dest_u32);
                     }
                 }
                 EmulMessage::TCDisconnect => self.manager.lock().ok()?.disconnect(),
@@ -202,6 +206,7 @@ impl UsageAnalyzer {
 
         // launch tokio task to read the events coming from the ebpf program
         let network_int = self.config.network_interface.clone();
+        let my_ip = self.my_ip.clone();
         tokio::spawn(async move {
             let mut loaded = Self::load_ebpf(&*network_int).await.unwrap();
             while let Some((name, events)) = loaded.events.next().await {
@@ -210,6 +215,11 @@ impl UsageAnalyzer {
                         for event in events {
                             let message = unsafe { ptr::read(event.as_ptr() as *const Message) };
                             // put the update in the map
+                            // Check if it is me, if yes ignore
+                            let dst = to_ip_addr_u32(message.dst.clone());
+                            if dst == my_ip {
+                                continue
+                            }
                             usage.insert(message.dst, (message.throughput, Instant::now()));
                         }
                     }
@@ -246,7 +256,8 @@ impl UsageAnalyzer {
                     // Add it into the to_remove and remove after to not create dead lock
                     to_remove.push(entry.key().clone());
                     // Send the information to the emulation
-                    stream.send(FlowUpdate(FlowConf::build(self.my_ip, dest.to_ip_addr(), None))).await.unwrap();
+                    let dest = to_ip_addr(dest);
+                    stream.send(FlowUpdate(FlowConf::build(self.my_ip, dest, None))).await.unwrap();
                     continue;
                 } else { // updated recently, check if update regarding old value or a new flow
                     let dest = MonitorIpAddr::new(entry.key().clone());
@@ -262,7 +273,8 @@ impl UsageAnalyzer {
                     if percentage_variation >= self.config.percentage_variation {
                         old_values.insert(entry.key().clone(), entry.val().0.clone());
                         // Send the information to the emulation
-                        stream.send(FlowUpdate(FlowConf::build(self.my_ip, dest.to_ip_addr(), Some(entry.val().0)))).await.unwrap();
+                        let dest = to_ip_addr(dest);
+                        stream.send(FlowUpdate(FlowConf::build(self.my_ip, dest, Some(entry.val().0)))).await.unwrap();
                     }
                 }
             }
@@ -278,4 +290,14 @@ impl UsageAnalyzer {
 /// retrieve the usage.elf file and return the bytes of the file.
 fn probe_code() -> &'static [u8] {
     include_bytes!("usage.elf")
+}
+
+fn to_ip_addr(mia: MonitorIpAddr) -> IpAddr {
+    to_ip_addr_u32(mia.addr)
+}
+
+
+fn to_ip_addr_u32(mia: u32) -> IpAddr {
+    let octets = mia.to_be_bytes();
+    IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }

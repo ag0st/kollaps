@@ -5,7 +5,7 @@ use std::u32;
 use tokio::io;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use common::{Subnet, TCConf, EmulMessage, ToU32IpAddr};
+use common::{Subnet, TCConf, EmulMessage, ToU32IpAddr, ToBytesSerialize};
 use dockhelper::DockerHelper;
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
 use async_trait::async_trait;
@@ -44,9 +44,9 @@ async fn main() {
         .await.unwrap();
 
     // Start the container
-    dock.launch_container("ebpf_test:1.0", "ebpf", ip, None).await.unwrap();
+    dock.launch_container("kollaps-iperf:1.0", "test", ip, None).await.unwrap();
     // get the pid of the container
-    let pid = dock.get_pid("ebpf").await.unwrap();
+    let pid = dock.get_pid("test").await.unwrap();
     println!("Got the pid: {}", pid);
 
 
@@ -68,7 +68,7 @@ async fn main() {
             .arg("/home/agost/workspace/MSc/development/kollaps/target/release/reporter")
             .arg("--flow-socket").arg(flow_socket)
             .arg("--tc-socket").arg(tc_socket)
-            .arg("--id").arg(format!("{}", ip.to_u32().unwrap()))
+            .arg("--ip").arg(format!("{}", ip))
             .spawn().expect("Cannot launch reporter");
     });
 
@@ -122,7 +122,7 @@ async fn main() {
             "s" => {
                 println!("stopping");
                 binding.send(EmulMessage::TCTeardown).await.unwrap();
-                dock.stop_container("ebpf").await.unwrap();
+                dock.stop_container("test").await.unwrap();
                 dock.delete_network().await.unwrap();
                 break;
             }
@@ -133,7 +133,7 @@ async fn main() {
         }
 
         if let Ok(limit) = u32::from_str(iter.next().unwrap()) {
-            conf.bandwidth_kbitps = Some(limit * 8 * 1000);
+            conf.bandwidth_kbitps = Some(limit);
         } else {
             eprintln!("Cannot parse the limit.");
             continue;

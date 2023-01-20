@@ -118,6 +118,8 @@ impl OrchestrationManager {
                                     None => sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap(),
                                     Some((network, cluster_nodes_affected)) => {
                                         let id = uuid.clone();
+                                        // Save the emulation
+                                        self.emulations_and_their_nodes.insert(id, cluster_nodes_affected.clone());
                                         match self.send_start_emulation(id, network, cluster_nodes_affected, events).await {
                                             Ok(_) => {
                                                 // Todo: Just for debug sake
@@ -145,6 +147,7 @@ impl OrchestrationManager {
                 let id = Uuid::parse_str(&*id).unwrap();
                 let uuids = vec![id];
                 self.abort_emulations(uuids).await;
+                sender.send(None).unwrap();
             }
             MessageWrapper { message: _message, sender: Some(sender) } => {
                 let _ = sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::BadFile("You need to send file via NewTopology enumeration".to_string()))));
