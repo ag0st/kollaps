@@ -8,7 +8,7 @@ mod reporter_config;
 mod cluster_node;
 mod topology_message;
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 // re-exporting the configs objects
@@ -54,19 +54,30 @@ pub trait ToBytesSerialize: Serialize + for<'a> Deserialize<'a> {
         let in_string = String::from_utf8(buf[..].to_owned()).unwrap();
         deserialize::<Self>(&*in_string)
     }
-
 }
 
 pub trait ToU32IpAddr {
-    fn to_u32(&self) -> Result<u32>;
+    fn to_u32(&self) -> u32;
 }
 
-impl ToU32IpAddr for IpAddr {
-    fn to_u32(&self) -> Result<u32> {
+pub trait AsV4 {
+    fn as_v4(&self) -> Result<&Ipv4Addr>;
+}
+
+impl AsV4 for IpAddr {
+    fn as_v4(&self) -> Result<&Ipv4Addr> {
         match self {
-            IpAddr::V4(a) => Ok(u32::from_ne_bytes(a.octets())),
-            IpAddr::V6(_) =>
-                Err(Error::new("common", ErrorKind::NotASocketAddr, "cannot transform an IpV6 into a u32"))
+            IpAddr::V4(a) => Ok(a),
+            IpAddr::V6(_) => {
+                Err(Error::new("AsV4 Ipaddr", ErrorKind::InvalidData, "You cannot convert an IpV6 in IpV4"))
+            }
         }
+    }
+}
+
+impl ToU32IpAddr for Ipv4Addr {
+    fn to_u32(&self) -> u32 {
+        // a.octets gives us big endian value like [127, 0, 0, 1]
+        u32::from_be_bytes(self.octets())
     }
 }

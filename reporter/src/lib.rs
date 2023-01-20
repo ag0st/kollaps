@@ -16,7 +16,7 @@ use redbpf::load::{Loaded, Loader};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
-use common::{FlowConf, ReporterConfig, EmulMessage, ToU32IpAddr, ToBytesSerialize};
+use common::{FlowConf, ReporterConfig, EmulMessage, ToU32IpAddr, ToBytesSerialize, AsV4};
 use common::EmulMessage::{FlowUpdate};
 use error::{Error, Result};
 use nethelper::{Handler, ProtoBinding, Protocol, Responder, Unix, UnixBinding};
@@ -57,32 +57,42 @@ impl Handler<EmulMessage> for TCHandler {
     async fn handle(&mut self, bytes: BytesMut) -> Option<EmulMessage> {
         if let Ok(mess) = EmulMessage::from_bytes(bytes) {
             match mess {
+                // For now, The TCAL only support IpV4 addresses, print an error and
+                // continue if we find an IpV6
+
                 EmulMessage::TCInit(conf) => {
-                    let dest_u32 = conf.dest.to_u32().unwrap().to_be();
-                    self.manager.lock().ok()?.init(dest_u32)
+                    if conf.dest.is_ipv6() {
+                        eprintln!("The Traffic Control Abstraction Layer do not support IpV6 for now, ignoring...")
+                    }
+                    self.manager.lock().ok()?.init(conf.dest.as_v4().unwrap().to_u32())
                 },
                 EmulMessage::TCUpdate(conf) => {
-                    let dest_u32 = conf.dest.to_u32().unwrap().to_be();
+                    if conf.dest.is_ipv6() {
+                        eprintln!("The Traffic Control Abstraction Layer do not support IpV6 for now, ignoring...")
+                    }
+
                     let manager = self.manager.lock().ok()?;
-                    if self.initialized_path.lock().ok()?.contains(&dest_u32) {
+                    let destination_u32 = conf.dest.as_v4().unwrap().to_u32();
+
+                    if self.initialized_path.lock().ok()?.contains(&destination_u32) {
                         if let Some(bw) = conf.bandwidth_kbitps {
-                            manager.change_bandwidth(dest_u32, bw);
+                            manager.change_bandwidth(destination_u32, bw);
                         }
                         if let Some((lat, jit)) = conf.latency_and_jitter {
-                            manager.change_latency(dest_u32, lat, jit);
+                            manager.change_latency(destination_u32, lat, jit);
                         }
                         if let Some(drop) = conf.drop {
-                            manager.change_loss(dest_u32, drop);
+                            manager.change_loss(destination_u32, drop);
                         }
                     } else {
                         manager
                             .initialize_path(
-                                dest_u32,
+                                destination_u32,
                                 conf.bandwidth_kbitps.unwrap(),
                                 conf.latency_and_jitter.unwrap().0,
                                 conf.latency_and_jitter.unwrap().1,
                                 conf.drop.unwrap());
-                        self.initialized_path.lock().ok()?.insert(dest_u32);
+                        self.initialized_path.lock().ok()?.insert(conf.dest.to_u32().unwrap());
                     }
                 }
                 EmulMessage::TCDisconnect => self.manager.lock().ok()?.disconnect(),
