@@ -7,27 +7,39 @@ struct TestResult {
     nb_tests: usize,
     nb_avoided: usize,
     nb_useful: usize,
+    graph: Network<usize>
 }
 
 #[test]
 fn tests() {
-    let ranges = [5, 10, 15, 20/*, 30, 40, 50, 60*/];
+    let ranges = [/*5, 10, 15, */20/*, 30, 40, 50, 60*/];
     let total_retry_per_range = 100;
-    let diff_speeds = 500;
-    let sufficient_speed = 1000;
+    let diff_speeds = 10000;
+    let sufficient_speed = 1000000;
     let mut csv = "".to_owned();
+    let mut graph: Option<Network<usize>> = None;
     for i in 0..ranges.len() {
         let mut total_tests = 0;
         let mut total_avoided_tests = 0;
         let mut total_error_count = 0;
         let mut total_useful = 0;
         let max_switches = min(ranges[i] / 2, 50);
+        let mut max_per_node_tests = 0.0;
+        let mut min_per_node_tests = f64::MAX;
         for _ in 0..total_retry_per_range {
             let test_res = launch_test(ranges[i], max_switches, diff_speeds, sufficient_speed);
             total_tests += test_res.nb_tests;
             total_avoided_tests += test_res.nb_avoided;
             total_error_count += test_res.error_count;
             total_useful += test_res.nb_useful;
+            let nb_tests_per_node = test_res.nb_tests as f64 / ranges[i] as f64;
+            if nb_tests_per_node > max_per_node_tests {
+                max_per_node_tests = nb_tests_per_node;
+            }
+            if nb_tests_per_node < min_per_node_tests {
+                min_per_node_tests = nb_tests_per_node;
+                graph = Some(test_res.graph);
+            }
         }
         println!("Tests for {} (terminal nodes) and {} internal node", ranges[i], max_switches);
 
@@ -44,22 +56,24 @@ fn tests() {
             Average avoided tests in percent: {avg_percent_avoided_tests}%\n\
             # Tests / terminal node: {avg_tests_per_nodes}\
             \n\n---------------------------------------------\n");
-        csv.push_str(&*format!("{diff_speeds} # diff. speeds \t{} #nodes \t{:.2} #t/n \t{:.1}% useful \n", ranges[i], avg_tests_per_nodes, percentage_useful));
+        let normal_tests = (ranges[i] - 1) * ((ranges[i]) / 2);
+        csv.push_str(&*format!("{diff_speeds}\t{}\t{:.2}\t{:.1}\t{:.2}\t{:.2}\t{normal_tests}\t{avg_nb_tests}\n", ranges[i], avg_tests_per_nodes, percentage_useful, max_per_node_tests, min_per_node_tests));
+        //graph.take().unwrap().print_graph(ranges[i]);
     }
     println!("{}", csv);
 }
 
 fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: usize) -> TestResult {
-    // create a result object
+    // First, generate a random graph
+    let (net, speeds) = Network::<usize>::generate_random_network(nb_inter, nb_ter, diff_speed, netgraph::PathStrategy::ShortestPath);
+
     let mut result = TestResult {
         error_count: 0,
         nb_tests: 0,
         nb_avoided: 0,
         nb_useful: 0,
+        graph: net.clone()
     };
-
-    // First, generate a random graph
-    let (net, speeds) = Network::<usize>::generate_random_network(nb_inter, nb_ter, diff_speed, netgraph::PathStrategy::ShortestPath);
 
     // create a CGraph
     let mut cgraph = CGraph::<usize>::new();
@@ -75,12 +89,12 @@ fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: us
         while let Some(other) = cgraph.find_missing_from_me(me, sufficient) {
             let speed = net.bandwidth_between(&i, &other.info()).unwrap();
             result.nb_tests += 1;
-            let useful = cgraph.add_link_direct_test(me, other, speed).expect("cannot add link");
+            let useful = cgraph.add_link_direct_test(me, other, speed as usize).expect("cannot add link");
             if useful { result.nb_useful += 1; }
         }
     }
     // check the errors
-    let speeds_matrix = cgraph.speeds();
+    let (speeds_matrix, _) = cgraph.speeds();
     for i in 0..speeds_matrix.size() {
         for j in 0..speeds_matrix.size() {
             if i == j { continue; }

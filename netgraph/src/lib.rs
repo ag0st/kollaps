@@ -584,34 +584,34 @@ impl<T: Vertex> Network<T> {
 
 
     // This method print the graph in latex format using tikzpicture.
-    // pub fn print_graph(&self) {
-    //     let name_function = |x: usize| {
-    //         if x < self.nb_term { format!("{x}") } else { format!("S{}", x - self.nb_term) }
-    //     };
-    //     let attributes = |i: usize, j: usize| {
-    //         let mut attr = String::new();
-    //         if i >= self.nb_term && j >= self.nb_term {
-    //             attr.push_str(&*format!(" color=\"red\" penwidth=2.0"))
-    //         }
-    //         attr
-    //     };
-    //     println!("graph network_graph {{");
-    //     for i in 0..self.edges.size() {
-    //         for j in 0..i {
-    //             if let Some(edge) = self.edges[(i, j)] {
-    //                 let name_1 = name_function(i);
-    //                 let name_2 = name_function(j);
-    //                 println!("\t{} -- {} [label={}{}];", name_1, name_2, edge.speed(), attributes(i, j));
-    //             }
-    //         }
-    //     }
-    //     // print the color of each bridges
-    //     for i in self.nb_term..self.edges.size() {
-    //         let name = name_function(i);
-    //         println!("\t{} [color=\"red\"]", name)
-    //     }
-    //     println!("}}")
-    // }
+    pub fn print_graph(&self, nb_term: usize) {
+        let name_function = |x: usize| {
+            if x < nb_term { format!("{x}") } else { format!("S{}", x - nb_term) }
+        };
+        let attributes = |i: usize, j: usize| {
+            let mut attr = String::new();
+            if i >= nb_term && j >= nb_term {
+                attr.push_str(&*format!(" color=\"red\" penwidth=2.0"))
+            }
+            attr
+        };
+        println!("graph network_graph {{");
+        for i in 0..self.links.size() {
+            for j in 0..i {
+                if let Some(edge) = self.links[(i, j)].as_ref() {
+                    let name_1 = name_function(i);
+                    let name_2 = name_function(j);
+                    println!("\t{} -- {} [label={}{}];", name_1, name_2, edge.bandwidth(), attributes(i, j));
+                }
+            }
+        }
+        // print the color of each bridges
+        for i in nb_term..self.links.size() {
+            let name = name_function(i);
+            println!("\t{} [color=\"red\"]", name)
+        }
+        println!("}}")
+    }
 }
 
 /// A Pair represent a node and another value. It is usec by Widest-Path and Shortest-Path algorithm

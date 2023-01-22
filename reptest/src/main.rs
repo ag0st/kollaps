@@ -34,7 +34,7 @@ async fn main() {
     let tc_socket = "/tmp/tc_socket.sock";
     let flow_socket = "/tmp/flow_socket.sock";
     let ip = IpAddr::from_str("192.168.1.200").unwrap();
-    let dest = IpAddr::from_str("192.168.1.102").unwrap();
+    let dest = IpAddr::from_str("192.168.1.201").unwrap();
     let gateway = "192.168.1.1";
     let subnet = Subnet::from(("192.168.1.0", 24));
     let interface = "wlp0s20f3";
