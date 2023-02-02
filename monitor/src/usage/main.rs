@@ -16,6 +16,7 @@
 #![no_std]
 #![no_main]
 
+use core::borrow::BorrowMut;
 use core::mem::{self, MaybeUninit};
 use memoffset::offset_of;
 
@@ -81,17 +82,20 @@ fn measure_tcp_lifetime(skb: SkBuff) -> SkBuffResult {
                     None => usage.set(&dst.addr, &len),
                     Some(value) => {
                         let new_value = value + len;
-                        usage.set(&dst.addr, &new_value);
                         let delta_time_ns = current_time - old_time;
                         if delta_time_ns > 25_000_000 { // 25 ms
                             // Calculate the throughput Bytes/seconds
+                            // Can be inlined in the instruction bellow but the compiler will do it
+                            // for me and it is more clear this way.
                             let delta_time_seconds = delta_time_ns / 1_000_000_000;
                             // calculate throughput in Kbit/s
-                            let throughput = value * 8 / (delta_time_seconds * 1000);
+                            let throughput = new_value * 8 / (delta_time_seconds * 1000);
                             perf_events.insert(skb.skb as *mut __sk_buff, &Message { dst: dst.addr, throughput: throughput as u32});
                             // // reset usage and time
                             usage.set(&dst.addr, &0);
                             time.set(&dst.addr, &current_time);
+                        } else {
+                            usage.set(&dst.addr, &new_value);
                         }
                     }
                 }

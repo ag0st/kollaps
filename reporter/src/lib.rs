@@ -27,7 +27,6 @@ use crate::tc_manager::TCManager;
 
 pub mod error;
 mod tc_manager;
-mod data;
 
 #[derive(Clone)]
 /// TCHandler is used to receive events message from the emulation module in the main application
@@ -92,7 +91,7 @@ impl Handler<EmulMessage> for TCHandler {
                                 conf.latency_and_jitter.unwrap().0,
                                 conf.latency_and_jitter.unwrap().1,
                                 conf.drop.unwrap());
-                        self.initialized_path.lock().ok()?.insert(conf.dest.to_u32().unwrap());
+                        self.initialized_path.lock().ok()?.insert(conf.dest.as_v4().unwrap().to_u32());
                     }
                 }
                 EmulMessage::TCDisconnect => self.manager.lock().ok()?.disconnect(),
@@ -305,7 +304,6 @@ fn probe_code() -> &'static [u8] {
 fn to_ip_addr(mia: MonitorIpAddr) -> IpAddr {
     to_ip_addr_u32(mia.addr)
 }
-
 
 fn to_ip_addr_u32(mia: u32) -> IpAddr {
     let octets = mia.to_be_bytes();

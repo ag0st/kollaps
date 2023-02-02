@@ -27,7 +27,7 @@ impl Orchestrator {
             host_mapping,
             attributed_emul: HashMap::new(),
             emulations: HashMap::new(),
-            controllers_port
+            controllers_port,
         }
     }
 
@@ -47,19 +47,21 @@ impl Orchestrator {
         for i in 0..matrix.size() {
             let host = self.host_mapping[equivalence[i]].clone();
             nodes[i].as_app_mut().set_host(host);
-            let h = nodes[i].as_app().host();
+            nodes[i].as_app_mut().set_index(i);
+
+            let host = nodes[i].as_app().host();
             // replace it in the network
             network.edit_vertex(nodes[i].clone());
             // Save that we attributed somebody to this host
-            if let Some(entry) = self.attributed_emul.get_mut(&h) {
+            if let Some(entry) = self.attributed_emul.get_mut(&host) {
                 entry.insert(emul_id);
             } else {
                 let mut set = HashSet::new();
                 set.insert(emul_id);
-                self.attributed_emul.insert(h.clone(), set);
+                self.attributed_emul.insert(host.clone(), set);
             }
 
-            cluster_nodes_affected.insert(h.clone());
+            cluster_nodes_affected.insert(host.clone());
         }
         // Now, we must reduce the bandwidth used by what we assigned
         for i in 0..matrix.size() {
@@ -99,6 +101,32 @@ impl Orchestrator {
 
         // Finally, remove the key from the map
         self.emulations.remove_entry(emul_id);
+        Ok(())
+    }
+
+    pub fn stop_app_emulation_on(&mut self, emul_id: &Uuid, node: &ClusterNodeInfo, app_index: usize) -> Result<()> {
+        // Get the emulation
+        if let Some((matrix, equivalence)) = self.emulations.get(emul_id) {
+            // Add back the used bandwidth on the residual graph
+            for i in 0..matrix.size() {
+                if i != app_index { continue; } // remove only for the app
+                for j in 0..i {
+                    if i == j { continue; }
+                    self.residual_graph[(equivalence[i], equivalence[j])] += matrix[(i, j)];
+                }
+            }
+
+            // remove the emulation from attributed emul
+            self.attributed_emul.get_mut(node).as_mut().unwrap().remove(emul_id);
+        } else {
+            return Err(Self::err_producer().create(ErrorKind::InvalidData, "no emulation registered"));
+        }
+
+        // Check if the emulation is still present on other host, if it is the case, remove the emulation
+        if let None = self.attributed_emul.iter().filter(|(_, l)| l.contains(emul_id)).last() {
+            // delete the emulation
+            self.emulations.remove_entry(emul_id);
+        }
         Ok(())
     }
 
@@ -222,10 +250,17 @@ impl Orchestrator {
             let sub_graph = SymMatrix::new_fn(combination.len(), |row, col| {
                 let i1 = combination[row] % residual.size();
                 let i2 = combination[col] % residual.size();
-                residual[(i1, i2)]
+
+                // divide the available bandwidth by the number of the clones if they are not the same vertices
+                if i1 != i2 && clones > 0 {
+                    residual[(i1, i2)] / (clones as u32)
+                } else {
+                    residual[(i1, i2)]
+                }
+
             });
 
-            let result = Self::graph_isomorphism(g1, &sub_graph)?;
+            let result = Self::graph_isomorphism(g1, &sub_graph,residual.size())?;
             match result {
                 None => {
                     // Not found yet, try the next combination
@@ -249,7 +284,7 @@ impl Orchestrator {
         Self::find_iso_internal(g1, residual, clones + 1, tested_comb, max_depth - 1)
     }
 
-    fn graph_isomorphism(g1: &SymMatrix<u32>, residual: &SymMatrix<u32>) -> Result<Option<Vec<usize>>> {
+    fn graph_isomorphism(g1: &SymMatrix<u32>, residual: &SymMatrix<u32>, size_before_cloning: usize) -> Result<Option<Vec<usize>>> {
         if g1.size() != residual.size() {
             return Err(Self::err_producer().create(ErrorKind::InvalidData, "the graph must have the same size"));
         }
@@ -258,7 +293,7 @@ impl Orchestrator {
         let mut exchange_index = 1;
 
         // First check
-        if Self::verify_permutation(g1, residual, &equivalence) {
+        if Self::verify_permutation(g1, residual, &equivalence, size_before_cloning) {
             return Ok(Some(equivalence));
         }
 
@@ -273,7 +308,7 @@ impl Orchestrator {
                 } else {
                     equivalence.swap(exchange_counter[exchange_index], exchange_index);
                 }
-                if Self::verify_permutation(g1, residual, &equivalence) {
+                if Self::verify_permutation(g1, residual, &equivalence, size_before_cloning) {
                     return Ok(Some(equivalence));
                 }
                 exchange_counter[exchange_index] += 1;
@@ -286,12 +321,27 @@ impl Orchestrator {
         Ok(None)
     }
 
-    fn verify_permutation(g1: &SymMatrix<u32>, residual: &SymMatrix<u32>, equivalence: &Vec<usize>) -> bool {
-        for i in 0..equivalence.len() {
-            for j in 0..i {
+    fn verify_permutation(g1: &SymMatrix<u32>, residual: &SymMatrix<u32>, equivalence: &Vec<usize>, size_before_cloning: usize) -> bool {
+        for i in 0..residual.size() {
+            // Get the bandwidth to all other app that are not directly on the same node
+            let host = i % size_before_cloning; // make modulo in case of clones
+            if host != i { continue } // this is a clone, we already checked for it in previous iteration.
+
+            // Get all the app on this host and the ones that are not on the same host:
+            let apps_on_same_host = (0..g1.size()).filter(|app| equivalence[app.clone()] % size_before_cloning == host).collect::<Vec<usize>>();
+            let apps_not_same_host = (0..g1.size()).filter(|app| equivalence[app.clone()] % size_before_cloning != host).collect::<Vec<usize>>();
+
+            let mut total_required_bandwidth = 0;
+            for same_host_app in &apps_on_same_host {
+                for not_same_host_app in &apps_not_same_host {
+                    total_required_bandwidth += g1[(*same_host_app, *not_same_host_app)];
+                }
+            }
+
+            for j in 0..host {
                 // If the requested bandwidth is greater than the one available in the residual graph,
                 // it is not good
-                if g1[(i, j)] > residual[(equivalence[i], equivalence[j])] {
+                if total_required_bandwidth > residual[(host, j)] {
                     return false;
                 }
             }

@@ -34,7 +34,6 @@ impl PerfCtrl {
             .arg("-1") // one time test
             .spawn().expect("cannot launch iperf3 server");
 
-        // creating the node info to reach me
         Ok(())
     }
 

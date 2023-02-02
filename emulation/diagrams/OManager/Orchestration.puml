@@ -1,0 +1,41 @@
+@startuml
+
+class OManager {
+    -my_info_ctrl : ClusterNodeInfo
+    -my_info_omanager : ClusterNodeInfo
+    -local_sender : Sender<MessageWrapper<ControllerMessage>>
+    -cgraph_update_canal : Receiver<CGraphUpdate>
+    -experiments : HashMap<Uuid, HashMap<ClusterNodeInfo, bool>>
+    +build_and_start(my_info: ClusterNodeInfo, local_sender: Sender<MessageWrapper<ControllerMessage>>,
+                      cgraph_update_canal: Receiver<CGraphUpdate>, connection_port: u16,
+                        controller_port: u16, original_cgraph: CGraph<ClusterNodeInfo>)
+    -event_loop() : Result<()>
+    -abort_emulations(uuids: Vec<Uuid>) : void
+    -handle_experiment_message(message: MessageWrapper<ExperimentMessage>)
+    -send_start_experiment(uuid: Uuid, network: Network<Node>, nodes: Vec<ClusterNodeInfo>, events: Vec<ExperimentEvents>) : Result<()>
+}
+
+class Orchestrator {
+    -residual_graph : SymMatrix<u32>
+    -host_mapping : Vec<ClusterNodeInfo>
+    -attributed_experiments : HashMap<ClusterNodeInfo, HashSet<Uuid>>
+    -{field} experiments : HashMap<Uuid, (SymMatrix<u32>, Vec<usize>)>
+    -controller_port : u16
+
+    +new(cgraph: CGraph<ClusterNodeInfo>, controller_port: u16) : Orchestrator
+    +new_experiment(network: Network<Node>, experiment_id: Uuid) : Result<Option<(Network<Node>, Vec<ClusterNodeInfo)>>
+    +stop_experiment(experiment_id: Uuid) : Result<()>
+    +stop_app_emulation_on(experiment_id: &Uuid, node: &ClusterNodeInfo, app_index: u32) : Result<()>
+    +update_with_cgraph(cgraph: CGraph<ClusterNodeInfo>) : Result<()>
+    +remove_cluster_node(node: ClusterNodeInfo) -> Result<Vec<Uuid>>
+    -find_isomorphism(bw_graph: SymMatrix<u32>) : Result<Option<Vec<usize>>
+    -{static} convert_cgraph_nodeinfo(port: u16, cgraph: CGraph<ClusterNodeInfo>)
+    -{static} find_iso_internal(g1: SymMatrix<u32>, residual: SymMatrix<u32>, clones: usize, tested_comb: Vec<HashSet<usize>>, max_depth: usize) : Result<Option<Vec<usize>>>
+    -{static} graph_isomorphism(g1: SymMatrix<u32>, residual: SymMatrix<u32>, size_before_cloning: usize) : Result<Option<Vec<usize>>>
+    -{static} verify_permutation(g1: SymMatrix<u32>, residual: SymMatrix<u32>, equivalence: Vec<usize>, size_before_cloning: usize) : bool
+    -{static} next_comb(previous: Vec<usize>, k: usize, n: usize) : Option<Vec<usize>>
+}
+
+OManager "1" *-- "1" Orchestrator
+
+@enduml

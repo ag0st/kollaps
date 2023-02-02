@@ -15,7 +15,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::sleep_until;
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize};
+use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize, TopologyMessage};
 use dockhelper::DockerHelper;
 use netgraph::Network;
 use nethelper::{Handler, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, Unix, UnixBinding};
@@ -49,7 +49,8 @@ pub struct EmulCore {
     // There is no problem of cloning an app regarding mutability. An app itself do not allow
     // to be mutable. It doesn't publish its internals and no permissions is given via calls.
     is_leader: bool,
-    leader: ClusterNodeInfo,
+    experiment_leader: ClusterNodeInfo,
+    cluster_leader: ClusterNodeInfo,
     graph: Network<Node>,
     events: Option<Vec<EmulationEvent>>,
     my_apps: HashMap<Node, (UnixBinding<EmulMessage, NoHandler>, AppStatus)>,
@@ -62,17 +63,49 @@ pub struct EmulCore {
     emul_id: Uuid,
     reporters: Vec<Child>,
     emul_id_to_channel: Arc<Mutex<HashMap<Uuid, Sender<EmulMessage>>>>,
+    dock: DockerHelper,
     _marker: PhantomPinned,
 }
 
+impl Drop for EmulCore {
+    fn drop(&mut self) {
+        // We were dropped, we need to destroy the emulation. For this, we will kill all the apps if they are managed
+        // and kill the reporters.
+        // We need to go in async mode for this.
+        let mut my_apps = self.my_apps.drain().collect::<HashMap<Node, (UnixBinding<EmulMessage, NoHandler>, AppStatus)>>();
+        let dock = self.dock.clone();
+        let emul_id_to_channel = self.emul_id_to_channel.clone();
+        let emul_id = self.emul_id.clone();
+        tokio::spawn(async move {
+            // Remove this emulation from the list of emulations
+            emul_id_to_channel.lock().await.remove_entry(&emul_id);
+            // Clean all managed apps and reporters
+            for (node, (tc_socket, status)) in my_apps.iter_mut() {
+                match status {
+                    AppStatus::NotInit | AppStatus::Running | AppStatus::Stopped => {
+                        let _ = tc_socket.send(EmulMessage::TCTeardown).await;
+                        // kill the container app if exists, and if we control the life cycle
+                        let n = node.clone();
+                        let d = dock.clone();
+                        let _ = stop_app_if_necessary(n, d).await;
+                    }
+                    AppStatus::Crashed => {} // Already crashed
+                }
+            }
+        });
+    }
+}
+
+
 impl EmulCore {
-    pub fn new(emul: Emulation, myself: ClusterNodeInfo, emul_id_to_channel: Arc<Mutex<HashMap<Uuid, Sender<EmulMessage>>>>) -> EmulCore {
+    pub fn new(emul: Emulation, myself: ClusterNodeInfo, emul_id_to_channel: Arc<Mutex<HashMap<Uuid, Sender<EmulMessage>>>>, cluster_leader: ClusterNodeInfo, dock: DockerHelper) -> EmulCore {
         // First thing is to parse the emulation to gather all the information I need:
         let (ip_to_app, other_hosts) = parse_emulation(&emul, &myself);
         let is_leader = emul.am_i_leader(&myself);
         EmulCore {
             is_leader,
-            leader: emul.leader(),
+            experiment_leader: emul.leader(),
+            cluster_leader,
             emul_id: emul.uuid(),
             graph: emul.graph,
             events: Some(emul.events),
@@ -85,6 +118,7 @@ impl EmulCore {
             flow_sender: None,
             reporters: Vec::new(),
             emul_id_to_channel,
+            dock,
             _marker: PhantomPinned,
         }
     }
@@ -92,7 +126,7 @@ impl EmulCore {
     /// Start the emulation, launch all necessary application and reporters and start to listen
     /// For incoming messages.
     /// When the emulation has everything set, it will enters itself into the queue
-    pub async fn start_emulation(self: Pin<&mut Self>, dock: DockerHelper, reporter_path: String) -> Result<()> {
+    pub async fn init_emulation(self: Pin<&mut Self>, dock: DockerHelper, reporter_path: String) -> Result<()> {
         let this = unsafe { self.get_unchecked_mut() };
 
         // First, creating the socket, its handler and the incoming flow message channel.
@@ -199,24 +233,6 @@ impl EmulCore {
         // Start listening on events
         while let Some(event) = receiver.recv().await {
             match event {
-                EmulMessage::EmulAbort => {
-                    // We received an abort, we need to destroy the emulation. For this, we will kill all the apps if they are managed
-                    // and kill the reporters.
-                    for (node, (tc_socket, status)) in this.my_apps.iter_mut() {
-                        match status {
-                            AppStatus::NotInit | AppStatus::Running | AppStatus::Stopped => {
-                                tc_socket.send(EmulMessage::TCTeardown).await?;
-                                // kill the container app if exists, and if we control the life cycle
-                                let n = node.clone();
-                                let d = dock.clone();
-                                stop_app_if_necessary(n, d).await?
-                            }
-                            AppStatus::Crashed => {} // Already crashed
-                        }
-                        *status = AppStatus::Crashed;
-                    }
-                    // Finish, the check at the end of the loop will exit if everything is in crashed status.
-                }
                 EmulMessage::FlowUpdate(flow_conf) => {
                     // Todo: to support multiple app with same ip, change here.
                     // Get the concerned application based on their ip addr
@@ -331,7 +347,10 @@ impl EmulCore {
                                 tc_socket.send(EmulMessage::TCDisconnect).await?;
                                 // kill the container app if exists, and if we control the life cycle
                                 stop_app_if_necessary(node.clone(), dock.clone()).await?;
-                                *status = AppStatus::Crashed
+                                *status = AppStatus::Crashed;
+                                // Send to the orchestrator that we finished our emulation for this app
+                                let mut bind: TCPBinding<TopologyMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                                bind.send_to(TopologyMessage::CleanStop((this.emul_id.to_string(), this.myself.clone(), node.as_app().index())), this.cluster_leader.clone()).await.unwrap();
                             }
                         }
                     }
@@ -387,7 +406,7 @@ impl EmulCore {
             // Send to the leader that we are ready and wait for its response
             let mut bind:TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await?;
             let wrapper = ControllerMessage::EmulCoreInterchange(this.emul_id.to_string(), EmulMessage::EmulStart(EmulBeginTime{time: Instant::now()}));
-            bind.send_to(wrapper, this.leader.clone()).await?;
+            bind.send_to(wrapper, this.experiment_leader.clone()).await?;
             // Now wait on time synchro
             if let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
                 match event {

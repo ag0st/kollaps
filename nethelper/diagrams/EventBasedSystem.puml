@@ -1,0 +1,66 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+activate Component
+
+create event_channel
+Component -> event_channel: new
+
+create DefaultHandler
+Component -> DefaultHandler: new(event_channel)
+
+
+Component -> Protocol: bind(DefaultHandler)
+activate Protocol
+create ProtocolBinding
+Protocol -> ProtocolBinding : new
+Protocol --> Component : binding: ProtocolBinding
+deactivate Protocol
+
+Component -> ProtocolBinding : listen()
+activate ProtocolBinding
+create ListeningTask
+ProtocolBinding -> ListeningTask : new(handler)
+ProtocolBinding --> Component : Result<()>
+deactivate ProtocolBinding
+
+loop #LightBlue true
+    activate ListeningTask
+    ListeningTask -> ListeningTask : data = read_socket
+    ListeningTask -> DefaultHandler : handle(data)
+    activate DefaultHandler
+    DefaultHandler -> DefaultHandler : decoded_data = decode_data(data)
+    create oneshot_channel
+    DefaultHandler -> oneshot_channel : new
+    create MessageWrapper
+    DefaultHandler -> MessageWrapper : new(oneshot_channel, decoded_data)
+    DefaultHandler -> event_channel : send(MessageWrapper)
+    DefaultHandler -> oneshot_channel : read_block()
+    activate oneshot_channel
+    oneshot_channel --> DefaultHandler : Option<response>
+    deactivate oneshot_channel
+    DefaultHandler --> ListeningTask : Option<response>
+    destroy oneshot_channel
+    deactivate DefaultHandler
+    alt response != empty
+        ListeningTask -> ListeningTask : send_back_on_socket(response)
+    end
+    deactivate ListeningTask
+end loop
+
+loop #LightYellow true
+Component -> event_channel : read_block()
+activate event_channel
+event_channel --> Component : MessageWrapper
+deactivate event_channel
+Component -> Component : do_something_with_event(MessageWrapper.event)
+activate Component
+Component --> Component : result_do_smth
+deactivate Component
+Component -> oneshot_channel : Option<result_do_smth>
+destroy MessageWrapper
+end loop
+deactivate Component
+@enduml

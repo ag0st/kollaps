@@ -175,3 +175,216 @@ fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(shared_links: HashS
 
     new_flows
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+    use std::fmt::{Debug, Display, Formatter};
+    use std::hash::{Hash, Hasher};
+    use tokio::io;
+    use tokio::io::AsyncBufReadExt;
+    use tokio::sync::mpsc;
+    use std::str;
+    use std::str::FromStr;
+
+    use netgraph::PathStrategy;
+    use crate::bwsync::{remove_flow, update_flows};
+
+
+    #[derive(Eq, Clone, Copy)]
+    pub struct Flow<T: netgraph::Vertex> {
+        pub source: T,
+        pub destination: T,
+        bandwidth: u32,
+        pub target_bandwidth: u32,
+    }
+
+    impl<T: netgraph::Vertex> PartialEq for Flow<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.source == other.source && self.destination == other.destination
+        }
+    }
+
+    impl<T: netgraph::Vertex> Hash for Flow<T> {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            (self.source.clone(), self.destination.clone()).hash(state)
+        }
+    }
+
+    impl<T: netgraph::Vertex> Display for Flow<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.bandwidth, self.target_bandwidth)
+        }
+    }
+
+    impl<T: netgraph::Vertex> Debug for Flow<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Display::fmt(&self, f)
+        }
+    }
+
+    impl<T: netgraph::Vertex> Flow<T> {
+        pub fn build(source: T, destination: T, bandwidth: u32, target_bandwidth: u32) -> Flow<T> {
+            Flow { source, destination, bandwidth, target_bandwidth }
+        }
+    }
+
+
+    #[derive(Debug)]
+    pub enum Command {
+        ACTIVATE,
+        DEACTIVATE,
+        UPDATE,
+    }
+
+    #[tokio::test]
+    async fn main() {
+        // configuration
+        let nb_term = 3;
+        let nb_intern = 2;
+        let vertices = (0..nb_term + nb_intern).map(|i| i).collect();
+
+        println!("Creating a graph...");
+        let mut net = netgraph::Network::new(&vertices, PathStrategy::WidestPath);
+        // 0, 1, 2 = terminal nodes and 3, 4 = internal nodes
+        // 0 -> 3 100
+        // 1 -> 3 50
+        // 3 -> 4 100
+        // 4 -> 2 100
+        net.add_edge(&0, &3, 100);
+        net.add_edge(&1, &3, 50);
+        net.add_edge(&3, &4, 100);
+        net.add_edge(&4, &2, 100);
+        println!("Graph created!");
+
+        println!("Creating communication channels");
+
+        // The communication channels are done as follow:
+        // (the sender, the bandwidth) when something is received by a node on its channel,
+        // it means that a flow has been activated from the sender to him with the bandwidth indicated.
+        let mut receivers = Vec::new();
+        let mut senders = HashMap::new();
+        for i in 0..nb_term {
+            // create the channel
+            let (sender, receiver) = mpsc::channel(100);
+            receivers.push(Some(receiver));
+            senders.insert(vertices[i], sender);
+        }
+
+        for i in 0..nb_term {
+            tokio::spawn(launch_node(net.clone(), senders.clone(), receivers[i].take().unwrap(), i));
+        }
+        println!("All nodes launched, retrieving the information...");
+        loop {
+            println!("Choose between : [a src dest bandwidth] or [d src dest]");
+            let mut reader = io::BufReader::new(tokio::io::stdin());
+            let mut buffer = Vec::new();
+            reader.read_until(b'\n', &mut buffer).await.unwrap();
+            // parsing the command
+            let s = match str::from_utf8(&*buffer) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Cannot read your input: {}", e);
+                    continue;
+                }
+            };
+            let command: Command;
+            let mut iter = s.split_whitespace();
+            match iter.next().unwrap() {
+                "a" => command = Command::ACTIVATE,
+                "d" => command = Command::DEACTIVATE,
+                _ => {
+                    eprintln!("unrecognized command");
+                    continue;
+                }
+            }
+
+            let mut flow = Flow::build(0, 0, 0, 0);
+            if let Ok(src) = usize::from_str(iter.next().unwrap()) {
+                flow.source = src;
+            } else {
+                eprintln!("Cannot parse the source.");
+                continue;
+            }
+
+            if let Ok(dest) = usize::from_str(iter.next().unwrap()) {
+                flow.destination = dest;
+            } else {
+                eprintln!("Cannot parse the destination.");
+                continue;
+            }
+
+            if let Command::ACTIVATE = command {
+                if let Ok(bandwidth) = u32::from_str(iter.next().unwrap()) {
+                    flow.target_bandwidth = bandwidth;
+                } else {
+                    eprintln!("Cannot parse the destination.");
+                    continue;
+                }
+            }
+
+            // send the command to the node
+            println!("sending command to the node");
+            senders.get(&flow.source).unwrap().send((command, flow)).await.unwrap();
+        }
+    }
+
+
+    pub async fn launch_node<T: netgraph::Vertex>(graph: netgraph::Network<T>, node_list: HashMap<T, mpsc::Sender<(Command, Flow<T>)>>, mut receiver: mpsc::Receiver<(Command, Flow<T>)>, id: T) {
+        // Used to store the active flows.
+        // Node_id (destination) : Bandwidth
+        let mut active_flows: HashSet<Flow<T>> = HashSet::new();
+
+        // Used to store the available bandwidth on the graph
+        let mut bw_graph = graph.clone();
+
+        // Start listening on events
+        while let Some(event) = receiver.recv().await {
+            match event {
+                (Command::ACTIVATE, flow) => {
+                    if flow.target_bandwidth == 0 {
+                        eprintln!("Cannot create a node with a target bandwidth to 0");
+                        continue; // loop on the next message
+                    }
+                    println!("[{}] Received new flow to activate", id);
+
+                    (active_flows, bw_graph) = update_flows(active_flows, &flow, &graph, bw_graph);
+                    println!("[{}] Finish adding, new flows: {:?}", id, active_flows);
+
+                    // Finally, update everyone
+                    // Now we can get the flow we added and transmit it to the other guys
+                    let new_flow = active_flows.get(&flow).unwrap().clone();
+                    println!("[{}] Updating the other guys", id);
+                    broadcast_flow(&node_list, &new_flow, &id).await;
+                }
+                (Command::DEACTIVATE, flow) => {
+                    // Check if we are legit to deactivate the flow
+                    if !active_flows.contains(&flow) || flow.source != id {
+                        eprintln!("Cannot deactivate non-existing flow, or I am not the source.");
+                        continue; // loop on the next message
+                    }
+                    (active_flows, bw_graph) = remove_flow(active_flows, &flow, &graph);
+                    // Finally update everyone!
+                    // make sure that we set the flow bandwidth to 0
+                    let mut new_flow = flow.clone();
+                    new_flow.bandwidth = 0;
+                    new_flow.target_bandwidth = 0;
+                    println!("[{}] Updating the other guys", id);
+                    broadcast_flow(&node_list, &new_flow, &id).await;
+                }
+                (Command::UPDATE, flow) => {
+                    if flow.target_bandwidth == 0 { // we are in deactivation
+                        println!("[{}] Received update of a flow, need to remove it, calculating new flows", id);
+                        (active_flows, bw_graph) = remove_flow(active_flows, &flow, &graph);
+                    } else { // we need to add / update a new flow
+                        println!("[{}] Received update of a flow, need to update my state", id);
+                        (active_flows, bw_graph) = update_flows(active_flows, &flow, &graph, bw_graph);
+                    }
+                    println!("[{}] Finish update, new flows: {:?}", id, active_flows);
+                }
+            }
+        }
+    }
+
+}

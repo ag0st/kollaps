@@ -2,8 +2,43 @@
 'https://plantuml.com/sequence-diagram
 
 autonumber
+activate NewNode
+NewNode -> NewNode : my_info = my_ip + my_port
+NewNode -> Network : broadcast(CJQRequest(my_info))
+note right : UDP
+NewNode -> NewNode : wait for response with timeout
+activate NewNode
+alt timeout
+    NewNode -> NewNode : event_channel += CJQRetry
+    NewNode -> NewNode : exit procedure
+else
+    Leader --> NewNode : response = CJQResponse(kind)
+    NewNode --> NewNode : response
+    deactivate NewNode
+end
 
-Controller -> NetworkManager : broadcast(cjq_request)
-    create TimerTask
-    Controller -> TimerTask : new(event_canal)
+alt response.kind == Wait(time)
+    NewNode -> NewNode : wait(time)
+    NewNode -> NewNode : event_channel += CJQRetry
+    NewNode -> NewNode : exit procedure
+else response.kind == Accepted
+    NewNode -> NewNode : adhesion_ok = add_myself_in_cluster()
+    activate NewNode
+    NewNode -> Leader : CGraphGet
+    note right : TCP
+    Leader --> NewNode : CGraphSend(cgraph)
+    loop cgraph.is_not_complete()
+        NewNode -> NewNode : target = cgraph.find_missing_from(my_info)
+        NewNode -> NewNode : result = execute_perf_test(target)
+        NewNode -> NewNode : cgraph.set_result(my_info, target, result)
+    end
+    NewNode -> Leader : CGraphUpdate(cgraph)
+    note right : TCP
+    NewNode --> NewNode : Result
+    deactivate NewNode
+    alt !adhesion_ok
+        NewNode -> Leader : CJQAbort
+        note right : TCP
+    end
+end
 @enduml

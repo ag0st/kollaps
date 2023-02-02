@@ -1,0 +1,234 @@
+@startuml
+'https://plantuml.com/class-diagram
+skinparam defaultFontSize 20
+
+enum ApplicationKind {
+    BareMetal
+    {field} Container(ContainerConfig)
+}
+
+class ContainerConfig {
+    -name : String
+    -id : Option<String>
+    -{field} image_command : Option<(String, Option<String>)>
+    +new(name: String, id: Option<String>, image_command: Option<(String, Option<String>)> : ContainerConfig
+    +image() : Option<String>
+    +command() : Option<String>
+    +name() : String
+    +id() : Option<String>
+}
+
+ApplicationKind ..> ContainerConfig : <<use>>
+
+class ClusterNodeInfo {
+    +port : u16
+}
+
+ClusterNodeInfo *-- "1" IpAddr : +ip_addr
+
+
+Application *-- ClusterNodeInfo : -host : Option<ClusterNodeInfo>
+Application *-- ApplicationKind : -kind
+
+class Application {
+    -name : String
+    -index : Option<usize>
+    +runs_on(node: ClusterNodeInfo) : bool
+    +host() : ClusterNodeInfo
+    +kind() : ApplicationKind
+    +name() : String
+    +index() : usize
+    +set_host(host: ClusterNodeInfo) : void
+    +set_index(index: usize) : void
+}
+
+Application *-- "1" IpAddr : +ip_addr
+Application *-- "1" IpAddr : -ip_app : Option
+
+Node ..> Application : <<use>>
+
+enum Node {
+    {field} App(u32, Application)
+    {field} Bridge(u32)
+    +is_app() : bool
+    +as_app() : Application
+    +as_app_mut() : Application
+    +is_same_by_id(id: u32) : bool
+    +id() : u32
+}
+
+enum Duplex {
+    HalfDuplex
+    FullDuplex
+}
+
+class Link<T> {
+    -internal_source : usize
+    -internal_destination : usize
+    -bandwidth : u32
+    +source : T
+    +destination : T
+    +drop : f32
+    +{field} latency_jitter : (f32, f32)
+    +build(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: u32) : Link
+    +build_all(source: T, destination: T, internal_source: usize, internal_destination: usize, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) : Link
+    +set_duplex(duplex: Duplex) : void
+    +bandwidth() : u32
+}
+Link *-- Duplex : -duplex
+
+enum PathStrategy {
+    WidestPath
+    ShortestPath
+}
+
+class Path<T> {
+    -links_set : HashSet<Link<T>>
+    +new() : Path<T>
+    +shared_edges(other: Path<T>) : HashSet<Link<T>>
+}
+
+class Network<T: Eq + Hash> {
+    -links : SymMatrix<Option<Link<T>>
+    -mapper : HashMap<T, usize>
+    +new(vertices: Vec<T>, path_strategy: PathStrategy) : Network<T>
+    +vertices() : HashSet<T>
+    +bandwidth_matrix(predicate: Fn(T) bool) : (SymMatrix<u32>, Vec<T>)
+    +edit_vertex(new_vertex: T) : void
+    +add_edge(from: T, to: T, bandwidth: u32) : void
+    +add_edge_with_props(from: T, to: T, bandwidth: u32, latency_jitter: (f32, f32), drop: f32) : void
+    +update_bandwidth(from: T, to: T, bandwidth: u32) : void
+    +bandwidth_between(from: T, to: T) : Option<u32>
+    +properties_between(from: T, to: T) : Option<(u32, f32, (f32, f32))>
+    +update_edges_along_path(from: T, to: T, func: Fn(u32) u32) : void
+    +get_path_between(from: T, to: T) : Option<Path<T>>
+    -map_two(vertex1: T, vertex2: T) : Option<(usize, usize)>
+    -update_bandwidth_inter(from: usize, to: usize, bandwidth: u32) : void
+    -map(vertex: T) : Option<usize>
+    -path_between(from: usize) : (Vec<Option<u32>>, Vec<Option<usize>>)
+    -shortest_path(from: usize) : (Vec<Option<u32>>, Vec<Option<usize>>)
+    -widest_pathU(from: usize) : (Vec<Option<u32>>, Vec<Option<usize>>)
+    -neighbours(from: usize) : Vec<usize>
+}
+Network *-- PathStrategy : -path_strategy
+Network ..> Link : <<use>>
+Network ..> Path : <<use>>
+
+
+enum EventAction {
+    Join
+    Quit
+    Crash
+}
+
+class TCConf {
+    +bandwidth_kbitps: Option<u32>
+    +{field}  drop: Option<f32>
+    +{field} latency_and_jitter: Option<(f32, f32)>
+}
+TCConf *-- "1" IpAddr : +dest
+
+interface ToSocketAddr {
+    to_socket_addr() : Result<SocketAddr>
+}
+
+ToSocketAddr -|> ToSocketAddrs
+"(&str, u16)" --|> ToSocketAddr
+"&str" --|> ToSocketAddr
+SocketAddr --|> ToSocketAddr
+String --|> ToSocketAddr
+
+ToBytesSerialize --|> Serde::Serialize
+ToBytesSerialize --|> Serde::Deserialize
+interface ToBytesSerialize {
+    +serialize_to_bytes(&self) : Bytes
+    +from_bytes(buf: BytesMut) : Result<Self>
+}
+
+class FlowConf {
+    +throughput: Option<u32>,
+}
+FlowConf *-- "1" IpAddr : +src
+FlowConf *-- "1" IpAddr : +dest
+
+enum IpAddr {
+    V4
+    V6
+}
+IpAddr ..> IpAddrV4 : <<use>>
+
+enum ErrorKind {
+    NotFound
+    AlreadyStarted
+    NoResource
+    PerfTestFailed
+    CommandFailed
+    OpcodeNotRecognized
+    NotASocketAddr
+    BadWrite
+    ConnectionInterrupted
+    BadMode
+    NoStream
+    UnexpectedEof
+    EmptyGraph
+    AlreadyExists
+    InconsistentState
+    InvalidData
+    DockerInit
+    Unsupported
+    Parse
+    Wrapped
+}
+
+class ErrorProducer {
+    -location : String
+    +create(kind : ErrorKind, message: &str) : Error
+    +wrap(kind : ErrorKind, message: &str, error: Error) : Error
+}
+ErrorProducer ..> ErrorKind : <<use>>
+
+class Error {
+    -location : String
+    -message : String
+    -sub_error : Option<Box<Error>>
+    +new(location: &str, kind: ErrorKind, message: &str) : Error
+    +producer(location: &str) : ErrorProducer
+    +wrap(location: &str, kind: ErrorKind, message: &str, error: impl std::error::Error + 'static + Send) -> Error
+}
+Error ..> ErrorProducer : <<use>>
+Error *-- "1" ErrorKind : -kind
+
+class Subnet {
+    +from(&str) : Subnet
+    +from(cidr : (&str, u8)) : Subnet
+}
+Subnet *-- "1" IpAddrV4 : -ip
+Subnet *-- "1" IpMask : -mask
+
+class IpMask {
+    -bytes : [u8: 4]
+    +to_cidr() : u8
+    +from([u8: 4]) : IpMask
+    +from(String) : IpMask
+    +from(&str) : IpMask
+}
+
+
+class ExperimentationEvent {
+    +app_id : u32
+    +time : Duration
+}
+ExperimentationEvent *-- "1" EventAction : action
+
+Experimentation *-- ClusterNodeInfo : -leader
+Experimentation *-- Network : +graph
+Experimentation *-- "0..N" ExperimentationEvent : +events
+class Experimentation {
+    -uuid : String
+    +build(uuid: Uuid, graph: Network<Node>, events: Vec<ExperimentationEvent>, leader: ClusterNodeInfo) : Experimentation
+    +uuid() : Uuid
+    +am_i_leader(myself: ClusterNodeInfo) : bool
+    +leader() : ClusterNodeInfo
+}
+
+@enduml

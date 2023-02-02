@@ -1,0 +1,136 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+interface Handler<T: ToBytesSerialize> {
+    handle(bytes: BytesMut) : Option<T>
+}
+class NoHandler
+class DefaultHandler {
+    -sender: tokio::sync::mpsc::Sender<MessageWrapper<T>>
+    +new(sender: tokio::sync::mpsc::Sender<MessageWrapper<T>>) : DefaultHandler
+}
+interface Responder<T>
+interface ResponderOnce<T>
+
+
+
+
+DefaultHandler ..> MessageWrapper
+
+class MessageWrapper<T: Debug> {
+    +message: T
+    +sender: Option<tokio::sync::oneshot::Sender<Option<T>>>
+}
+
+interface ProtoBinding<T: ToBytesSerialize + Send, H: Handler<T>> {
+    +set_handler(handler: H)
+    +listen() : Result<()>
+    +receive() : Result<()>
+    +send_to(to_send: T, addr: ToSocketAddr) : Result<()>
+    +send(to_send: T) : Result<()>
+}
+
+interface Protocol<T: ToBytesSerialize + Send, H: Handler<T>, B: ProtoBinding<T, H> + Send> {
+    +{static} bind_addr(addr: ToSocketAddr, handler: Option<H>) : Result<B>
+    +{static} bind(handler: Option<H>) : Result<B>
+}
+
+
+
+
+
+
+' TCP ----------------------------------------------------------
+
+class TCP
+
+enum TCPBindingMode {
+    None
+    {field} Connected(TcpStream)
+    {field} Listening(Arc<TcpListener>)
+}
+
+class TCPBinding<T: ToBytesSerialize + Send, H: Handler<T>> {
+    -socket: TcpSocket
+    -close_channel: Option<oneshot::Sender<&str>>
+    +connect(addr: ToSocketAddr) : Result<()>
+    +receive_once(handler_once: ResponderOnce<T>) : Result<()>
+    +peers_addr : Result<(SocketAddr, SocketAddr)>
+    -get_stream() : Result<TcpStream>
+    - {static} read_and_handle_from_stream(stream: TcpStream, handler: Handler<T>) : Result<()>
+    - {static} read_from_stream(stream: TcpStream) : Result<BytesMut>
+    - {static} write_to_stream(stream: TcpStream, to_write: T) : Result<()>
+}
+
+
+
+' UDP ----------------------------------------------------------
+
+class UDP
+
+
+class UDPBinding<T: ToBytesSerialize + Send, H: Handler<T>> {
+    -socket: UdpSocket
+    -ignore_list: HashSet<SocketAddr>
+    +broadcast(data: T, dest_port: u16) : Result<()>
+    +ignore(addr: ToSocketAddr) : Result<()>
+    +stop_ignoring(addr: ToSocketAddr) : Result<()>
+    - {static} send_to(socket: UdpSocket, to_send: T, addr: ToSocketAddr) : Result<()>
+    - {static} receive_and_handle_from(socket: UdpSocket, handler: Handler<T>, ignore: HashSet<SocketAddr>) : Result<()>
+}
+
+
+
+
+
+' UNIX ----------------------------------------------------------
+
+class Unix
+
+enum UnixBindingMode {
+    None
+    {field} Connected(UnixStream)
+    {field} Listening(Arc<UnixListener>)
+}
+
+class UnixBinding<T: ToBytesSerialize + Send, H: Handler<T>> {
+    -path: PathBuf
+    -close_channel: Option<oneshot::Sender<&str>>
+    +connect() : Result<()>
+    -get_stream() : Result<UnixStream>
+    - {static} read_and_handle_from_stream(stream: UnixStream, handler: Handler<T>) : Result<()>
+    - {static} read_from_stream(stream: UnixStream) : Result<BytesMut>
+    - {static} write_to_stream(stream: UnixStream, to_write: T) : Result<()>
+}
+
+
+
+ProtoBinding *-- "1" Handler : -Option<handler>
+
+UnixBinding *-- "1" UnixBindingMode : -mode
+TCPBinding *-right- "1" TCPBindingMode : -mode
+
+TCPBinding -left-|> ProtoBinding
+UnixBinding -left-|> ProtoBinding
+UDPBinding -left-|> ProtoBinding
+
+Unix .left.> UnixBinding
+UDP .left.> UDPBinding
+TCP .left.> TCPBinding
+
+Unix -right-|> Protocol
+TCP -right-|> Protocol
+UDP -right-|> Protocol
+
+TCPBinding -[hidden]d-> UnixBinding
+UDPBinding -[hidden]d-> TCPBinding
+
+Responder --|> Fn
+ResponderOnce --|> FnOnce
+NoHandler --|> Handler
+DefaultHandler --|> Handler
+Responder --|> Handler
+ResponderOnce --|> Handler
+
+
+@enduml

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +23,9 @@ pub struct Controller {
     myself: ClusterNodeInfo,
     /// Every emulations will add themself and retire themself from this.
     emul_id_to_channel: Arc<Mutex<HashMap<Uuid, Sender<EmulMessage>>>>,
+    emul_id_to_emulcore: Arc<Mutex<HashMap<Uuid, Pin<Box<EmulCore>>>>>,
     dock: DockerHelper,
+    cluster_leader: Option<ClusterNodeInfo>,
 }
 
 impl Controller {
@@ -40,7 +43,9 @@ impl Controller {
             config,
             myself,
             emul_id_to_channel: Arc::new(Default::default()),
+            emul_id_to_emulcore: Arc::new(Default::default()),
             dock,
+            cluster_leader: None,
         })
     }
 
@@ -67,6 +72,7 @@ impl Controller {
             let ls = sender.clone();
             let controllers_port = self.config.emulation_event_port;
             let connections_port = self.config.topology_submission_port;
+            self.cluster_leader = Some(me.clone());
             tokio::spawn(async move {
                 OrchestrationManager::build_and_start(
                     me,
@@ -82,15 +88,22 @@ impl Controller {
         while let Some(message) = receiver.recv().await {
             match message {
                 MessageWrapper { message: ControllerMessage::EmulationStart(leader, emul), sender: Some(sender) } => {
-                    self.start_emulation(emul, self.dock.clone(), leader).await.unwrap();
+                    // We can store the cluster leader for next requests. The Emulation Start is the first message that we must receive.
+                    if let None = self.cluster_leader {
+                        self.cluster_leader = Some(leader);
+                    }
+                    self.create_emulation(emul, self.dock.clone(), self.cluster_leader.as_ref().unwrap().clone()).await.unwrap();
                     sender.send(None).unwrap();
                 }
-                MessageWrapper { message: ControllerMessage::EmulationStart(leader, emul), sender: None } => {
+                MessageWrapper { message: ControllerMessage::EmulationStart(_, emul), sender: None } => {
+                    // If we receive this message, we already know the leader, it is me! Mario!
+
                     // coming directly from me because I am the leader
-                    self.start_emulation(emul, self.dock.clone(), leader).await.unwrap();
+                    self.create_emulation(emul, self.dock.clone(), self.cluster_leader.as_ref().unwrap().clone()).await.unwrap();
                 }
                 MessageWrapper { message: ControllerMessage::EmulCoreInterchange(id, mess), sender: Some(sender) } => {
                     let id = Uuid::parse_str(&*id).unwrap();
+                    // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
                     if let Some(mess_sender) = self.emul_id_to_channel.lock().await.get(&id) {
                         mess_sender.send(mess).await.unwrap();
                     }
@@ -98,16 +111,28 @@ impl Controller {
                 }
                 MessageWrapper { message: ControllerMessage::EmulationStop(id), sender: Some(sender) } => {
                     let id = Uuid::parse_str(&*id).unwrap();
-                    if let Some(mess_sender) = self.emul_id_to_channel.lock().await.get(&id) {
-                        mess_sender.send(EmulMessage::EmulAbort).await.unwrap();
-                    }
+                    // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
+                    self.emul_id_to_emulcore.lock().await.remove_entry(&id);
                     sender.send(None).unwrap();
                 }
                 MessageWrapper { message: ControllerMessage::EmulationStop(id), sender: None } => {
                     let id = Uuid::parse_str(&*id).unwrap();
-                    if let Some(mess_sender) = self.emul_id_to_channel.lock().await.get(&id) {
-                        mess_sender.send(EmulMessage::EmulAbort).await.unwrap();
-                    }
+                    // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
+                    self.emul_id_to_emulcore.lock().await.remove_entry(&id);
+                }
+                MessageWrapper { message: ControllerMessage::ExperimentReady(id), sender: Some(sender) } => {
+                    let id = Uuid::parse_str(&*id).unwrap();
+                    // We can safely get the registered cluster leader from our attribute, this kind of message always comes after we receive a
+                    // EmulationStart where we store the leader.
+                    let leader = self.cluster_leader.as_ref().unwrap().clone();
+                    self.start_emulation(id, self.dock.clone(), leader).await.unwrap();
+                    sender.send(None).unwrap();
+                }
+                MessageWrapper { message: ControllerMessage::ExperimentReady(id), sender: None } => {
+                    let id = Uuid::parse_str(&*id).unwrap();
+                    // If we receive this message via direct send over our receive channel, we are the leader
+                    let leader = self.cluster_leader.as_ref().unwrap().clone();
+                    self.start_emulation(id, self.dock.clone(), leader).await.unwrap();
                 }
                 _ => {}
             }
@@ -115,27 +140,48 @@ impl Controller {
         Ok(())
     }
 
-    async fn start_emulation(&mut self, emul: Emulation, dock: DockerHelper, leader: ClusterNodeInfo) -> Result<()> {
+    async fn start_emulation(&self, uuid: Uuid, dock: DockerHelper, cluster_leader: ClusterNodeInfo) -> Result<()> {
+        let emul_id_to_emulcore = self.emul_id_to_emulcore.clone();
+        tokio::spawn(async move {
+            if let Err(error) = async {
+                // take ownership of the emulcore
+                let mut emulcore = emul_id_to_emulcore.lock().await.remove(&uuid).unwrap();
+                // Now, the emulcores must synchronize between themself
+                emulcore.as_mut().synchronize(Duration::from_secs(5)).await?;
+                emulcore.as_mut().flow_loop(dock).await?;
+
+                Ok::<_, Error>(())
+            }.await {
+                // An error occurred, we need to notify the leader
+                eprintln!("Error occurred when starting the emulation: {}", error);
+                let mut bind: TCPBinding<TopologyMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                bind.send_to(TopologyMessage::Abort(uuid.to_string()), cluster_leader).await.unwrap();
+            }
+        });
+        Ok(())
+    }
+
+    async fn create_emulation(&mut self, emul: Emulation, dock: DockerHelper, cluster_leader: ClusterNodeInfo) -> Result<()> {
         // Clone for the emulation for moving
         let me = self.myself.clone();
         let reporter_path = self.config.reporter_exec_path.clone();
         let emul_id_to_chan = self.emul_id_to_channel.clone();
         let emul_id = emul.uuid();
+        let c_l = cluster_leader.clone();
+        let emul_id_to_emulcore = self.emul_id_to_emulcore.clone();
         tokio::spawn(async move {
             if let Err(error) = async {
-                let mut emulcore = Box::pin(EmulCore::new(emul, me, emul_id_to_chan));
-                let d = dock.clone();
-                emulcore.as_mut().start_emulation(d, reporter_path).await?;
-                // Now, the emulcores must synchronize between themself
-                emulcore.as_mut().synchronize(Duration::from_secs(2)).await?;
-                emulcore.as_mut().flow_loop(dock).await?;
+                let mut emulcore = Box::pin(EmulCore::new(emul, me.clone(), emul_id_to_chan, c_l.clone(), dock.clone()));
+                emulcore.as_mut().init_emulation(dock, reporter_path).await?;
+                // Now we can tell the Kollaps cluster leader that we are ready and store the emulation core.
+                emul_id_to_emulcore.lock().await.insert(emul_id.clone(), emulcore);
+                TCP::bind(Some(NoHandler)).await?.send_to(TopologyMessage::EmulationReady((emul_id.to_string(), me)), c_l).await?;
                 Ok::<_, Error>(())
             }.await {
                 // An error occurred, we need to notify the leader
                 eprintln!("Error occured when instatiating the emulation: {}", error);
                 let mut bind: TCPBinding<TopologyMessage, NoHandler> = TCP::bind(None).await.unwrap();
-                bind.send_to(TopologyMessage::Abort(emul_id.to_string()), leader).await.unwrap();
-
+                bind.send_to(TopologyMessage::Abort(emul_id.to_string()), cluster_leader).await.unwrap();
             }
         });
         Ok(())

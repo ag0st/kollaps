@@ -90,6 +90,8 @@ pub struct Application {
     host: Option<ClusterNodeInfo>,
     name: String,
     kind: ApplicationKind,
+    /// This is set by the orchestrator to remember which app correspond to which index in the emulation matrix.
+    index: Option<usize>,
 }
 
 impl Application {
@@ -99,6 +101,7 @@ impl Application {
             host: host.clone(),
             name,
             kind,
+            index: None
         }
     }
 
@@ -122,8 +125,16 @@ impl Application {
         self.name.clone()
     }
 
+    pub fn index(&self) -> usize {
+        self.index.unwrap().clone()
+    }
+
     pub fn set_host(&mut self, host: ClusterNodeInfo) {
         self.host = Some(host);
+    }
+
+    pub fn set_index(&mut self, index: usize) {
+        self.index = Some(index);
     }
 }
 
@@ -137,7 +148,9 @@ impl Display for Application {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Node {
+    /// App (id, Application)
     App(u32, Application),
+    /// Bridge (id)
     Bridge(u32),
 }
 
@@ -299,14 +312,16 @@ pub enum ControllerMessage {
     EmulCoreInterchange(String, EmulMessage),
     EmulationStart(ClusterNodeInfo, Emulation),
     EmulationStop(String),
+    ExperimentReady(String),
 }
 
 impl Display for ControllerMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ControllerMessage::EmulCoreInterchange(id, mess) => write!(f, "EmulInterchange for {}: {}", id, mess),
-            ControllerMessage::EmulationStart(ClusterNodeInfo, emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
+            ControllerMessage::EmulationStart(_, emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
             ControllerMessage::EmulationStop(uuid) => write!(f, "EmulationStop of {}", uuid),
+            ControllerMessage::ExperimentReady(uuid) => write!(f, "Emulation {} is ready to launch", uuid),
         }
     }
 }

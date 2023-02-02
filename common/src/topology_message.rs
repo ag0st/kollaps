@@ -1,13 +1,15 @@
 use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
-use crate::ToBytesSerialize;
+use crate::{ClusterNodeInfo, ToBytesSerialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TopologyMessage {
     NewTopology(String),
     Accepted,
     Rejected(TopologyRejectReason),
-    Abort(String)
+    Abort(String),
+    CleanStop((String, ClusterNodeInfo, usize)),
+    EmulationReady((String, ClusterNodeInfo)),
 }
 
 impl Display for TopologyMessage {
@@ -17,6 +19,8 @@ impl Display for TopologyMessage {
             TopologyMessage::Accepted => write!(f, "Topology Accepted"),
             TopologyMessage::Rejected(reason) => write!(f, "Your topology submission has been rejected. Reason: {}", reason),
             TopologyMessage::Abort(id) => write!(f, "Emulation {} aborted", id),
+            TopologyMessage::CleanStop((id, node, app)) => write!(f, "App {} on node {} of experiment {} finished", app, node, id),
+            TopologyMessage::EmulationReady((id, node)) => write!(f, "Emulation {} ready on node {}", id, node),
         }
     }
 }

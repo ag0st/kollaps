@@ -1,0 +1,43 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+NetworkHelper -> OManager : TopologyMessage::NewTopology(topology_file)
+
+
+activate OManager
+OManager -> TopologyParser : parse_topology(topology_file)
+activate TopologyParser
+TopologyParser -> TopologyParser : services = parse_services()
+TopologyParser -> TopologyParser : bridges = parse_bridges()
+create Network
+TopologyParser -> Network : network = new(services + bridges)
+TopologyParser -> TopologyParser : parse_links(network)
+TopologyParser -> TopologyParser : events = parse_events()
+TopologyParser --> OManager : (network, events)
+deactivate TopologyParser
+
+OManager -> OManager : uuid = generate_id()
+activate Orchestrator
+OManager -> Orchestrator: new_experimentation(network, uuid)
+Orchestrator --> OManager : mapping = Option<network>
+deactivate Orchestrator
+
+alt mapping = Some(network)
+    OManager -> OManager : save_emulation(uuid, NodesReady<Node, false>)
+    OManager -> OManager : send_start_emulation(uuid, network, events)
+    activate OManager
+    OManager -> OManager : leader = choose_experiment_leader()
+    create Experiment
+    OManager -> Experiment : experiment = new(network, events)
+    loop cluster_node in experiment
+    OManager -> NetworkHelper : send_to(cluster_node, experiment)
+    end loop
+    deactivate OManager
+    OManager --> NetworkHelper : Accepted
+else mapping = None
+    OManager --> NetworkHelper : Rejected::NoDeploymentFound
+end
+deactivate OManager
+@enduml

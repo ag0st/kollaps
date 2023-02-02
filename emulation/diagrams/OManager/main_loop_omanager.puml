@@ -1,0 +1,97 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+skinparam defaultFontSize 20
+
+
+participant OManager
+participant exp_event_channel
+participant cgraph_update_channel
+participant NetworkHelper
+participant Orchestrator
+participant TopologyParser
+
+autonumber
+activate OManager
+loop true
+
+    alt #LightBlue
+        OManager -> exp_event_channel : read
+        activate exp_event_channel
+        note right : blocking
+        exp_event_channel --> OManager : event
+        deactivate exp_event_channel
+
+
+
+        alt event == NewTopology(topology_file)
+            activate OManager
+            OManager -> TopologyParser : parse_topology(topology_file)
+            activate TopologyParser
+            TopologyParser -> TopologyParser : services = parse_services()
+            TopologyParser -> TopologyParser : bridges = parse_bridges()
+            create Network
+            TopologyParser -> Network : network = new(services + bridges)
+            TopologyParser -> TopologyParser : parse_links(network)
+            TopologyParser -> TopologyParser : events = parse_events()
+            TopologyParser --> OManager : (network, events)
+            deactivate TopologyParser
+
+            OManager -> OManager : uuid = generate_id()
+            activate Orchestrator
+            OManager -> Orchestrator: new_experiment(network, uuid)
+            Orchestrator --> OManager : mapping = Option<network>
+            deactivate Orchestrator
+
+            alt mapping = Some(network)
+                OManager -> OManager : save_emulation(uuid, NodesReady<Node, false>)
+                OManager -> OManager : send_start_emulation(uuid, network, events)
+                activate OManager
+                OManager -> OManager : leader = choose_experiment_leader()
+                create Experiment
+                OManager -> Experiment : experiment = new(network, events)
+                loop cluster_node in experiment
+                NetworkHelper <- OManager : send_to(cluster_node, experiment)
+                end loop
+                deactivate OManager
+                NetworkHelper <- OManager : Accepted
+            else mapping = None
+                NetworkHelper <- OManager : Rejected::NoDeploymentFound
+            end
+            deactivate OManager
+        else event == Abort(experiment_uuid)
+            OManager -> OManager : abort_experiments(Vec<uuid>)
+        else event == CleanStop(experiment_uuid, cluster_node, app)
+            OManager -> Orchestrator : stop_experiment_on(&id, &node, &app)
+        else event == EmulationReady(experiment_uuid, cluster_node)
+            OManager -> OManager : experiments[experiment_uuid][cluster_node] = true
+            note right : save that this experiment is ready on this cluster_node
+            OManager -> OManager : ready = is_experiment_ready(experiment_uuid)
+            alt ready
+                loop cluster_node in experiments[experiment_uuid]
+                    NetworkHelper <- OManager : send_to(cluster_node, ExperimentReady(experiment_uuid))
+                end loop
+            end alt
+        end
+
+    else #LightYellow
+        OManager -> cgraph_update_channel : read
+        activate cgraph_update_channel
+        note right : blocking
+        cgraph_update_channel --> OManager : event
+        deactivate cgraph_update_channel
+
+        alt event == NewNode(new_graph)
+            OManager -> Orchestrator : update_with_cgraph(graph)
+            Orchestrator --> OManager : affected_experiments
+            OManager -> OManager : abort_experiments(affected_experiments)
+        else event == Remove(cluster_node)
+            OManager -> Orchestrator : remove_cluster_node(cluster_node)
+            Orchestrator --> OManager : affected_experiments
+            OManager -> OManager : abort_experiments(affected_experiments)
+        end
+    end
+
+end
+deactivate OManager
+@enduml

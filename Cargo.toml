@@ -7,11 +7,9 @@ members = [
     "common",
     "matrix",
     "netgraph",
-    "bwsync",
     "dockhelper",
     "emulation",
     "reporter",
-    "reptest",
     "monitor",
 ]
 

@@ -1,0 +1,11 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+class TCConf {
+    +dest: IpAddr
+    +bandwidth_kbitps: Option<u32>
+    +{field}  drop: Option<f32>
+    +{field} latency_and_jitter: Option<(f32, f32)>
+}
+
+@enduml

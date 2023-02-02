@@ -73,7 +73,6 @@ pub enum EmulMessage {
     TCDisconnect,
     TCReconnect,
     TCTeardown,
-    EmulAbort,
     SocketReady,
     EmulStart(EmulBeginTime),
     Event(EmulationEvent),
@@ -113,7 +112,6 @@ impl EmulMessage {
                 Ok(EmulMessage::FlowUpdate(fl_conf))
             }
 
-            0x0002 => Ok(EmulMessage::EmulAbort),
             0x0003 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
                 let tc_conf = deserialize::<TCConf>(data)?;
@@ -145,7 +143,6 @@ impl EmulMessage {
     pub fn event_2_opcode(com: &EmulMessage) -> u16 {
         match com {
             EmulMessage::FlowUpdate(_) => 0x0001,
-            EmulMessage::EmulAbort => 0x0002,
             EmulMessage::TCInit(_) => 0x0003,
             EmulMessage::TCUpdate(_) => 0x0004,
             EmulMessage::TCDisconnect => 0x0005,
@@ -189,7 +186,6 @@ impl Display for EmulMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             EmulMessage::FlowUpdate(_) => write!(f, "FlowUpdate"),
-            EmulMessage::EmulAbort => write!(f, "EmulationAborted"),
             EmulMessage::TCInit(_) => write!(f, "TCInit"),
             EmulMessage::TCUpdate(_) => write!(f, "TCUpdate"),
             EmulMessage::TCDisconnect => write!(f, "TCDisconnect"),

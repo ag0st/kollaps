@@ -3,37 +3,46 @@
 
 autonumber
 
-?-> PerfsCtrl : start_test(target)
-activate PerfsCtrl
-PerfsCtrl -> NetworkManager : send(start_test)
-activate NetworkManager
-NetworkManager --> PerfsCtrl : ok
-deactivate NetworkManager
+?-> PerfCtrl : launch_test(target)
+activate PerfCtrl
+PerfCtrl -> NetHelper : connect(target)
+activate NetHelper
+NetHelper --> PerfCtrl : tcp_binding
+deactivate NetHelper
+PerfCtrl -> tcp_binding : send(Event::PClient)
+activate tcp_binding
+tcp_binding --> PerfCtrl : ok
+deactivate tcp_binding
 
-PerfsCtrl -> PerfsCtrl : start_iperf3_client(target)
-activate PerfsCtrl
+PerfCtrl -> tcp_binding : read_blocking()
+activate tcp_binding
+tcp_binding --> PerfCtrl : event
+deactivate tcp_binding
 
-PerfsCtrl -> PerfsCtrl : create msgq
-create IPerfTask
-PerfsCtrl -> IPerfTask : new(msgq)
-PerfsCtrl -> IPerfTask : start_client(target)
+alt event == Event::PServer
+    PerfCtrl -> PerfCtrl : create msgq
+    note right : Receiving PServer means that \n the target accepted to be the server
+    create IPerfTask
+    PerfCtrl -> IPerfTask : new(msgq)
+    PerfCtrl -> IPerfTask : start_client(target)
 
+    autonumber 1
+    activate IPerfTask
+    note right : Execute iPerf in another thread
+    IPerfTask -> IPerfTask : launch iperf3
+    IPerfTask -> IPerfTask : parse iperf3_result
+    IPerfTask -> IPerfTask : msgq += parsed_iperf3_result
+    deactivate IPerfTask
 
-activate IPerfTask
-IPerfTask -> IPerfTask : launch iperf3
-IPerfTask -> IPerfTask : parse iperf3_result
-IPerfTask -> IPerfTask : msgq += parsed_iperf3_result
-deactivate IPerfTask
+    destroy IPerfTask
 
-destroy IPerfTask
-
-PerfsCtrl -> PerfsCtrl : speed_result = read(msgq)
-note left : read is blocking
-
-PerfsCtrl -> PerfsCtrl : speed_result
-
-deactivate PerfsCtrl
-
-?<--PerfsCtrl : speed_result
-deactivate PerfsCtrl
+    autonumber 11
+    PerfCtrl -> PerfCtrl : speed_result = read(msgq)
+    note left : read is blocking
+        PerfCtrl -> PerfCtrl : speed_result
+    ?<--PerfCtrl : speed_result
+else
+    ?<--PerfCtrl : Failed
+end
+deactivate PerfCtrl
 @enduml
