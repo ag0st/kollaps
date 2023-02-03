@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{min};
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomPinned;
 use std::net::IpAddr;
@@ -15,13 +15,13 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::sleep_until;
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize, TopologyMessage};
+use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize, OManagerMessage};
 use dockhelper::DockerHelper;
 use netgraph::Network;
 use nethelper::{Handler, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, Unix, UnixBinding};
 
 use crate::bwsync::{remove_flow, update_flows};
-use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, ControllerMessage, Emulation, Flow, Node};
+use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, EManagerMessage, Emulation, Flow, Node};
 use crate::scheduler::schedule;
 
 #[derive(Clone)]
@@ -238,14 +238,14 @@ impl EmulCore {
                     // Get the concerned application based on their ip addr
                     // For now, only consider flow inside the emulation
                     if let (Some(src), Some(dest)) = (this.ip_to_app.get(&flow_conf.src), this.ip_to_app.get(&flow_conf.dest)) {
-                        println!("Flow updated between {} and {}", src, dest);
+                        println!("Flow updated between {} and {} : {:?}", src, dest, flow_conf.throughput);
                         // Get the defined properties (by the topology) of the path between the source of the flow and the destination.
                         let (max_bandwidth, drop, latency_jitter) = this.graph.properties_between(src, dest)
                             .expect(&*format!("New flow between applications that do not have a connection!?: {} -> {}", src, dest));
 
                         // We can calculate the target bandwidth to be the min between allowed and the asked bandwidth
                         // If the flowConf.throughput == None, it means that the flow ended and so, the target bandwidth = 0
-                        let target_bandwidth = match flow_conf.throughput {
+                        let used_bandwidth = match flow_conf.throughput {
                             None => 0,
                             Some(bw) => {
                                 min(bw, max_bandwidth)
@@ -254,45 +254,37 @@ impl EmulCore {
 
                         // Build the internal representation of the flow based on what we received.
                         // The comparison between flows and hash are based on Src and Dest, this is what matters.
-                        let new_flow = Flow::build(src, dest, 0, target_bandwidth);
+                        let mut new_flow = Flow::build(src, dest, max_bandwidth, used_bandwidth);
 
                         // To keep a trace if the flow has been updated or removed. This is important
                         // at the end to know what Traffic Control config we have to send to the reporter
                         // if the source of the concerned flow runs on our machine
-                        let mut updated_flow = true;
+                        let mut flow_deletion = false;
 
-                        if new_flow.target_bandwidth == 0 { // we are in deactivation
+                        if new_flow.used_bandwidth == 0 { // we are in deactivation
                             if active_flows.contains(&new_flow) { // no need to remove if not exists
-                                (active_flows, bw_graph) = remove_flow(active_flows, &new_flow, &this.graph);
+                                (active_flows, bw_graph) = remove_flow(active_flows, &mut new_flow, &this.graph);
                             }
-                            updated_flow = false;
+                            flow_deletion = true;
                         } else { // we need to add / update a new flow
-                            (active_flows, bw_graph) = update_flows(active_flows, &new_flow, &this.graph, bw_graph);
+                            (active_flows, bw_graph) = update_flows(active_flows, &mut new_flow, &this.graph, bw_graph);
                         }
-                        // If I am the source of the flow, push it to the others
+                        // After executing modifications on the active flows, all the TC configurations
+                        // of the impacted apps must be redefined. First, we send the flow to the other
+                        // to begin directly the same process.
                         if src.as_app().runs_on(&this.myself) {
-                            // We will have to update the tc regarding if it was updated or removed
-                            let tc_conf = if updated_flow {
-                                // If updated, adjust the bandwidth
-                                let flow = active_flows.get(&new_flow).unwrap();
-                                let mut conf = TCConf::default(dest.as_app().ip_addr());
-                                conf.bandwidth_kbs(flow.bandwidth);
-                                conf
-                            } else {
-                                // If removed, put back the original value
-                                TCConf {
+                            // If the flow was deleted, we need to set back the original configuration for app.
+                            if flow_deletion {
+                                let tc_conf = TCConf {
                                     dest: dest.as_app().ip_addr(),
                                     bandwidth_kbitps: Some(max_bandwidth),
                                     latency_and_jitter: Some(latency_jitter),
                                     drop: Some(drop),
-                                }
-                            };
-                            // Update the TC Configuration of the App
-                            this.my_apps.get_mut(src).unwrap()
-                                .0.send(EmulMessage::TCUpdate(tc_conf)).await.unwrap();
+                                };
+                                this.my_apps.get_mut(src).unwrap()
+                                    .0.send(EmulMessage::TCUpdate(tc_conf)).await.unwrap();
+                            }
 
-
-                            // Finally as it runs on our machine, update the others
                             broadcast_flow(&flow_conf, &this.other_hosts, this.emul_id.clone()).await?;
                         }
                     }
@@ -349,14 +341,28 @@ impl EmulCore {
                                 stop_app_if_necessary(node.clone(), dock.clone()).await?;
                                 *status = AppStatus::Crashed;
                                 // Send to the orchestrator that we finished our emulation for this app
-                                let mut bind: TCPBinding<TopologyMessage, NoHandler> = TCP::bind(None).await.unwrap();
-                                bind.send_to(TopologyMessage::CleanStop((this.emul_id.to_string(), this.myself.clone(), node.as_app().index())), this.cluster_leader.clone()).await.unwrap();
+                                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                                bind.send_to(OManagerMessage::CleanStop((this.emul_id.to_string(), this.myself.clone(), node.as_app().index())), this.cluster_leader.clone()).await.unwrap();
                             }
                         }
                     }
                 }
                 _ => {}
             }
+
+            // Do the updates of the flows at the end of each iteration.
+            // If flows got removed or we don't know, we update anyway.
+            for flow in &active_flows {
+                if flow.source.as_app().runs_on(&this.myself) {
+                    let mut tc_conf = TCConf::default(flow.destination.as_app().ip_addr());
+                    tc_conf.bandwidth_kbs(flow.authorized_bandwidth);
+                    this.my_apps.get_mut(flow.source).unwrap()
+                        .0.send(EmulMessage::TCUpdate(tc_conf)).await.unwrap();
+                    println!("[EmulCore] BW UPDATE : {} -> {} : {}", flow.source.as_app().name(), flow.destination.as_app().name(), flow.authorized_bandwidth)
+                }
+            }
+
+
             // Check if it still is some application that are not crashed. If everyone is crashed,
             // We can stop the emulation
             let mut stop = true;
@@ -404,8 +410,8 @@ impl EmulCore {
             }
         } else {
             // Send to the leader that we are ready and wait for its response
-            let mut bind:TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await?;
-            let wrapper = ControllerMessage::EmulCoreInterchange(this.emul_id.to_string(), EmulMessage::EmulStart(EmulBeginTime{time: Instant::now()}));
+            let mut bind:TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
+            let wrapper = EManagerMessage::EmulCoreInterchange(this.emul_id.to_string(), EmulMessage::EmulStart(EmulBeginTime{time: Instant::now()}));
             bind.send_to(wrapper, this.experiment_leader.clone()).await?;
             // Now wait on time synchro
             if let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
@@ -430,10 +436,10 @@ impl EmulCore {
             }, flow.clone()))
             .collect::<Vec<(FlowConf, Flow<Node>)>>();
 
-        for (fc, f) in to_remove {
+        for (fc, mut f) in to_remove {
             // delete the flow from the active flows
             if active_flows.contains(&f) { // no need to remove if not exists
-                (active_flows, bw_graph) = remove_flow(active_flows, &f, graph);
+                (active_flows, bw_graph) = remove_flow(active_flows, &mut f, graph);
             }
             // Tell the others that this flow does not exists anymore
             broadcast_flow(&fc, other_hosts, emul_id).await?;
@@ -453,8 +459,8 @@ async fn broadcast_ready(destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid, 
         // Here when sending the information to the others, wrap our message with our uuid,
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
-        let mut bind: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await?;
-        let wrapper = ControllerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::EmulStart(emul_begin_time.clone()));
+        let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
+        let wrapper = EManagerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::EmulStart(emul_begin_time.clone()));
         bind.send_to(wrapper, host.clone()).await?
     }
     Ok(begin_time)
@@ -465,8 +471,8 @@ async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>,
         // Here when sending the information to the others, wrap our message with our uuid,
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
-        let mut bind: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await?;
-        let wrapper = ControllerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::FlowUpdate(flow.clone()));
+        let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
+        let wrapper = EManagerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::FlowUpdate(flow.clone()));
         bind.send_to(wrapper, host.clone()).await?
     }
     Ok(())

@@ -34,6 +34,10 @@ impl<T: Vertex> Path<T> {
             .map(|e| e.clone())
             .collect::<HashSet<Link<T>>>()
     }
+
+    pub fn links_set(&self) -> HashSet<Link<T>> {
+        self.links_set.clone()
+    }
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]

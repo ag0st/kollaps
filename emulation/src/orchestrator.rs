@@ -19,15 +19,15 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
-    pub fn new(mut cgraph: CGraph<ClusterNodeInfo>, controllers_port: u16) -> Orchestrator {
-        Self::convert_cgraph_nodeinfo(controllers_port, &mut cgraph);
+    pub fn new(mut cgraph: CGraph<ClusterNodeInfo>, emanagers_port: u16) -> Orchestrator {
+        Self::convert_cgraph_nodeinfo(emanagers_port, &mut cgraph);
         let (residual_graph, host_mapping) = cgraph.speeds();
         Orchestrator {
             residual_graph,
             host_mapping,
             attributed_emul: HashMap::new(),
             emulations: HashMap::new(),
-            controllers_port,
+            controllers_port: emanagers_port,
         }
     }
 
@@ -109,14 +109,12 @@ impl Orchestrator {
         if let Some((matrix, equivalence)) = self.emulations.get(emul_id) {
             // Add back the used bandwidth on the residual graph
             for i in 0..matrix.size() {
-                if i != app_index { continue; } // remove only for the app
-                for j in 0..i {
-                    if i == j { continue; }
-                    self.residual_graph[(equivalence[i], equivalence[j])] += matrix[(i, j)];
-                }
+                if i == app_index { continue; }
+                self.residual_graph[(equivalence[app_index], equivalence[i])] += matrix[(app_index, i)];
             }
 
             // remove the emulation from attributed emul
+            // todo : check no more app is running
             self.attributed_emul.get_mut(node).as_mut().unwrap().remove(emul_id);
         } else {
             return Err(Self::err_producer().create(ErrorKind::InvalidData, "no emulation registered"));
@@ -257,10 +255,9 @@ impl Orchestrator {
                 } else {
                     residual[(i1, i2)]
                 }
-
             });
 
-            let result = Self::graph_isomorphism(g1, &sub_graph,residual.size())?;
+            let result = Self::graph_isomorphism(g1, &sub_graph, residual.size())?;
             match result {
                 None => {
                     // Not found yet, try the next combination
@@ -325,7 +322,7 @@ impl Orchestrator {
         for i in 0..residual.size() {
             // Get the bandwidth to all other app that are not directly on the same node
             let host = i % size_before_cloning; // make modulo in case of clones
-            if host != i { continue } // this is a clone, we already checked for it in previous iteration.
+            if host != i { continue; } // this is a clone, we already checked for it in previous iteration.
 
             // Get all the app on this host and the ones that are not on the same host:
             let apps_on_same_host = (0..g1.size()).filter(|app| equivalence[app.clone()] % size_before_cloning == host).collect::<Vec<usize>>();

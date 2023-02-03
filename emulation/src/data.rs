@@ -220,7 +220,7 @@ impl Hash for Node {
     }
 }
 
-/// Represent an emulation
+/// Represent an experiment
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Emulation {
     leader: ClusterNodeInfo,
@@ -273,8 +273,23 @@ fn parse_uuid_or_crash(uuid: String) -> Uuid {
 pub struct Flow<'a, T: netgraph::Vertex> {
     pub source: &'a T,
     pub destination: &'a T,
-    pub bandwidth: u32,
-    pub target_bandwidth: u32,
+    pub authorized_bandwidth: u32,
+    pub used_bandwidth: u32,
+    pub max_allowed_bandwidth: u32,
+    is_hungry: bool
+}
+
+
+impl<'a, T: netgraph::Vertex> Flow<'a, T> {
+    pub fn build(source: &'a T, destination: &'a T, max_allowed_bandwidth: u32, used_bandwidth: u32) -> Flow<'a, T> {
+        Flow { source, destination, authorized_bandwidth: 0, max_allowed_bandwidth, used_bandwidth, is_hungry: false }
+    }
+    pub fn is_hungry(&self) -> bool {
+        self.is_hungry
+    }
+    pub fn set_hungry(&mut self, val: bool) {
+        self.is_hungry = val;
+    }
 }
 
 impl<'a, T: netgraph::Vertex> PartialEq for Flow<'a, T> {
@@ -291,7 +306,7 @@ impl<'a, T: netgraph::Vertex> Hash for Flow<'a, T> {
 
 impl<'a, T: netgraph::Vertex> Display for Flow<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.bandwidth, self.target_bandwidth)
+        write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.authorized_bandwidth, self.max_allowed_bandwidth)
     }
 }
 
@@ -301,29 +316,23 @@ impl<'a, T: netgraph::Vertex> Debug for Flow<'a, T> {
     }
 }
 
-impl<'a, T: netgraph::Vertex> Flow<'a, T> {
-    pub fn build(source: &'a T, destination: &'a T, bandwidth: u32, target_bandwidth: u32) -> Flow<'a, T> {
-        Flow { source, destination, bandwidth, target_bandwidth }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum ControllerMessage {
+pub enum EManagerMessage {
     EmulCoreInterchange(String, EmulMessage),
-    EmulationStart(ClusterNodeInfo, Emulation),
-    EmulationStop(String),
+    ExperimentNew(ClusterNodeInfo, Emulation),
+    ExperimentStop(String),
     ExperimentReady(String),
 }
 
-impl Display for ControllerMessage {
+impl Display for EManagerMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ControllerMessage::EmulCoreInterchange(id, mess) => write!(f, "EmulInterchange for {}: {}", id, mess),
-            ControllerMessage::EmulationStart(_, emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
-            ControllerMessage::EmulationStop(uuid) => write!(f, "EmulationStop of {}", uuid),
-            ControllerMessage::ExperimentReady(uuid) => write!(f, "Emulation {} is ready to launch", uuid),
+            EManagerMessage::EmulCoreInterchange(id, mess) => write!(f, "EmulInterchange for {}: {}", id, mess),
+            EManagerMessage::ExperimentNew(_, emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
+            EManagerMessage::ExperimentStop(uuid) => write!(f, "EmulationStop of {}", uuid),
+            EManagerMessage::ExperimentReady(uuid) => write!(f, "Experiment {} is ready to launch", uuid),
         }
     }
 }
 
-impl ToBytesSerialize for ControllerMessage {}
+impl ToBytesSerialize for EManagerMessage {}

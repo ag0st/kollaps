@@ -80,15 +80,15 @@ impl Ctrl {
         // Create the main handler for incoming events:
         let event_handler = DefaultHandler::<Event>::new(sender.clone());
         // bind the handler to the UDP and TCP incoming requests
-        let tcp_binding = TCP::bind_addr((ALL_ADDR, config.cmanager_event_port), Some(event_handler.clone()))
+        let tcp_binding = TCP::bind_addr((ALL_ADDR, config.cmanager_port), Some(event_handler.clone()))
             .await
             .unwrap();
-        let udp_binding = UDP::bind_addr((ALL_ADDR, config.cmanager_event_port), Some(event_handler.clone()))
+        let udp_binding = UDP::bind_addr((ALL_ADDR, config.cmanager_port), Some(event_handler.clone()))
             .await
             .unwrap();
 
 
-        let my_info = ClusterNodeInfo::new(my_ip, config.cmanager_event_port);
+        let my_info = ClusterNodeInfo::new(my_ip, config.cmanager_port);
         let my_speed = config.local_speed;
 
         Ok(Ctrl {
@@ -305,7 +305,7 @@ impl Ctrl {
         let cgraph = self.cgraph.clone();
         let my_info = self.my_info.clone();
         let event_sender = self.event_sender.clone();
-        let event_port = self.config.cmanager_event_port;
+        let event_port = self.config.cmanager_port;
         let heartbeat_timeout = self.config.heartbeat_timeout_seconds;
         let heartbeat_sleep = self.config.heartbeat_sleep_seconds;
         let cluster_id = self.cluster_id.unwrap();
@@ -397,7 +397,7 @@ impl Ctrl {
 
         let mut binding = UDP::bind(Some(handler)).await?;
         binding.listen()?;
-        binding.broadcast(Event::CJQRequest(self.my_info.clone()), self.config.cmanager_event_port)
+        binding.broadcast(Event::CJQRequest(self.my_info.clone()), self.config.cmanager_port)
             .await?;
         println!("[CJQ REQUEST] BROADCAST");
 

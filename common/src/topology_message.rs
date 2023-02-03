@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{ClusterNodeInfo, ToBytesSerialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum TopologyMessage {
+pub enum OManagerMessage {
     NewTopology(String),
     Accepted,
     Rejected(TopologyRejectReason),
@@ -12,15 +12,15 @@ pub enum TopologyMessage {
     EmulationReady((String, ClusterNodeInfo)),
 }
 
-impl Display for TopologyMessage {
+impl Display for OManagerMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            TopologyMessage::NewTopology(_) => write!(f, "New topology request"),
-            TopologyMessage::Accepted => write!(f, "Topology Accepted"),
-            TopologyMessage::Rejected(reason) => write!(f, "Your topology submission has been rejected. Reason: {}", reason),
-            TopologyMessage::Abort(id) => write!(f, "Emulation {} aborted", id),
-            TopologyMessage::CleanStop((id, node, app)) => write!(f, "App {} on node {} of experiment {} finished", app, node, id),
-            TopologyMessage::EmulationReady((id, node)) => write!(f, "Emulation {} ready on node {}", id, node),
+            OManagerMessage::NewTopology(_) => write!(f, "New topology request"),
+            OManagerMessage::Accepted => write!(f, "Topology Accepted"),
+            OManagerMessage::Rejected(reason) => write!(f, "Your topology submission has been rejected. Reason: {}", reason),
+            OManagerMessage::Abort(id) => write!(f, "Emulation {} aborted", id),
+            OManagerMessage::CleanStop((id, node, app)) => write!(f, "App {} on node {} of experiment {} finished", app, node, id),
+            OManagerMessage::EmulationReady((id, node)) => write!(f, "Emulation {} ready on node {}", id, node),
         }
     }
 }
@@ -42,4 +42,4 @@ impl Display for TopologyRejectReason {
     }
 }
 
-impl ToBytesSerialize for TopologyMessage {}
+impl ToBytesSerialize for OManagerMessage {}

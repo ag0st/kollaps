@@ -3,9 +3,9 @@ extern crate core;
 use tokio::sync::mpsc::Receiver;
 use cgraph::CGraphUpdate;
 use common::{Error, RunnerConfig};
-use crate::controller::Controller;
+use crate::emanager::EManager;
 
-mod controller;
+mod emanager;
 mod data;
 mod emulcore;
 mod scheduler;
@@ -17,7 +17,7 @@ mod pubapi;
 pub async fn run(config: RunnerConfig, cgraph_update: Option<Receiver<CGraphUpdate>>) -> Result<(), Error> {
     // Create the controller:
     println!("Creating the controller...");
-    let mut controller = Controller::build(config).await?;
+    let mut controller = EManager::build(config).await?;
 
     
     println!("Initialization of the controller...");

@@ -28,7 +28,7 @@ pub use subnet::{Subnet, IpMask, ToSocketAddr};
 pub use tc_message::{EmulMessage, FlowConf, TCConf, EmulationEvent, EventAction, EmulBeginTime};
 
 // Exporting topology messages for the pubapi and the client
-pub use topology_message::{TopologyMessage, TopologyRejectReason};
+pub use topology_message::{OManagerMessage, TopologyRejectReason};
 
 // exporting the ClusterNodeInfo
 pub use cluster_node::ClusterNodeInfo;

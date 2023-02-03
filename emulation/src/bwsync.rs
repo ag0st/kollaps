@@ -1,44 +1,26 @@
-use std::collections::HashSet;
+use std::cmp::min;
+use std::collections::{HashMap, HashSet};
+use netgraph::{Link};
 
 use crate::data::Flow;
 
-pub fn update_flows<'a, T: netgraph::Vertex>(mut active_flows: HashSet<Flow<'a, T>>, flow: &Flow<'a, T>, graph: &netgraph::Network<T>, mut bw_graph: netgraph::Network<T>) -> (HashSet<Flow<'a, T>>, netgraph::Network<T>) {
-    if active_flows.contains(flow) {
-        // Todo: There is more efficient way to do it but no time
-        // Remove the flow and then continue as we want to add it
-        (active_flows, bw_graph) = remove_flow(active_flows, flow, graph)
-    }
+pub fn update_flows<'a, T: netgraph::Vertex>(mut active_flows: HashSet<Flow<'a, T>>, flow: &mut Flow<'a, T>, graph: &netgraph::Network<T>, mut bw_graph: netgraph::Network<T>) -> (HashSet<Flow<'a, T>>, netgraph::Network<T>) {
+    if let Some(_) = bw_graph.bandwidth_between(&flow.source, &flow.destination) {
+        let new_flows = update_active_flows(flow, &active_flows, &graph);
 
-    if let Some(bandwidth_between) = bw_graph.bandwidth_between(&flow.source, &flow.destination) {
-        // If there is enough bandwidth remaining on the path, create the flow and send it to the others
-        if bandwidth_between >= flow.target_bandwidth {
-            bw_graph.update_edges_along_path_by(&flow.source, &flow.destination, |old_speed| old_speed - flow.target_bandwidth);
-            // Add the new flow inside the active flow.
-            let mut new_flow = flow.clone();
-            new_flow.bandwidth = flow.target_bandwidth;
-            // insert replace the old flow with the new one if exists
-            active_flows.insert(new_flow);
-        } else {
-            // new_flows contains now all active flows impacted by the update/creation of the flow
-            // with their new values. It also contains the updated/created flow with its values.
-            let new_flows = update_active_flows(flow, &active_flows, &graph);
-
-            // we must replace the old values of the flows inside our "active flows set"
-            for fl in new_flows {
-                active_flows.replace(fl);
-            }
-
-            // we must now adapt the bandwidth graph with the new flows, we better have
-            // to recalculate everything
-            bw_graph = calculate_bandwidth_graph(&graph, &active_flows);
+        for fl in new_flows {
+            active_flows.replace(fl);
         }
+        bw_graph = calculate_bandwidth_graph(&graph, &active_flows);
+        // }
     } else {
         eprintln!("[UPDATE_FLOW]: There is no path between {} and {}", flow.source, flow.destination)
     }
+
     (active_flows, bw_graph)
 }
 
-pub fn remove_flow<'a, T: netgraph::Vertex>(mut active_flows: HashSet<Flow<'a, T>>, flow: &Flow<'a, T>, graph: &netgraph::Network<T>) -> (HashSet<Flow<'a, T>>, netgraph::Network<T>) {
+pub fn remove_flow<'a, T: netgraph::Vertex>(mut active_flows: HashSet<Flow<'a, T>>, flow: &mut Flow<'a, T>, graph: &netgraph::Network<T>) -> (HashSet<Flow<'a, T>>, netgraph::Network<T>) {
     // remove the flow from the active flows
     active_flows.remove(&flow);
     let new_flows = update_active_flows(flow, &active_flows, &graph);
@@ -55,41 +37,67 @@ pub fn remove_flow<'a, T: netgraph::Vertex>(mut active_flows: HashSet<Flow<'a, T
 fn calculate_bandwidth_graph<'a, T: netgraph::Vertex>(graph: &netgraph::Network<T>, active_flows: &HashSet<Flow<'a, T>>) -> netgraph::Network<T> {
     let mut bw_graph = graph.clone();
     for flow in active_flows {
-        bw_graph.update_edges_along_path_by(&flow.source, &flow.destination, |old_speed| old_speed - flow.bandwidth);
+        bw_graph.update_edges_along_path_by(&flow.source, &flow.destination, |old_speed| old_speed - flow.used_bandwidth);
     }
     bw_graph
 }
 
-fn update_active_flows<'a, T: netgraph::Vertex>(flow_updated: &Flow<'a, T>, active_flows: &HashSet<Flow<'a, T>>, original_graph: &netgraph::Network<T>) -> HashSet<Flow<'a, T>> {
-    // If there is not enough bandwidth, find all active flows that share a same link
-    // and calculate my share. Then create the flow and update the other guys
-    // which will calculate their share.
-
-    // 1. Find all active flows that share links and gather these links.
-    let (shared_links, mut impacted_flows) =
-        get_shared_links_and_impacted_flows(flow_updated, active_flows, original_graph);
-
-    // If there is no links impacted by changes, no need to go further.
-    // We can simply send back an empty HashSet as there is nothing to update
-    if impacted_flows.is_empty() {
-        return HashSet::new()
+fn update_active_flows<'a, T: netgraph::Vertex>(flow_updated: &mut Flow<'a, T>, active_flows: &HashSet<Flow<'a, T>>, original_graph: &netgraph::Network<T>) -> HashSet<Flow<'a, T>> {
+    // copy past hungryness if exists
+    if active_flows.contains(flow_updated) {
+        flow_updated.set_hungry(active_flows.get(flow_updated).unwrap().is_hungry())
     }
 
-    // If the flow updated ask for 0 bandwidth, it means that it wants to stop. We can remove it
-    // from the impacted flows, this way the calculus will not be made with him.
-    // This is done just to be sure, if the user forgot to remove the flow from its active_flows
-    if flow_updated.target_bandwidth == 0 {
-        println!("[update_active_flows] You forgot to remove the flow from your active_flows, made it for you...");
-        impacted_flows.remove(&flow_updated);
-    } else {
-        // add the new flow inside the flows_sharing_links if not already active, or
-        // update it with new values, replace add if not exists or update existing one.
-        impacted_flows.replace(flow_updated.clone());
-    }
+    // We need to adapt the flows using the same links as the updated flow. For this,
+    // we need to go through each link constituting the path from source to destination of the updated flow,
+    // and for each links, adapt the flows that use this link.
+    let links_to_check = get_flows_by_shared_links(flow_updated, active_flows, original_graph);
 
-    // Finally, we can compute a distribution of the bandwidth across all the flows that are impacted.
-    distribute_bandwidth_across_flow(shared_links, impacted_flows)
+    // A same flow can be attach to multiple links, if it share multiple links of the path between source and dest of the updated flow.
+    // Some links can restrict more than others. This is why we keep only the most restrictive calculation.
+
+    // This is the first pass
+    let mut updated_active_flows = HashSet::new();
+    for (link, flows) in links_to_check.into_iter() {
+        // Finally, we can compute a distribution of the bandwidth across all the flows that are impacted.
+        let new_flows = distribute_bandwidth_across_flow(link, flows);
+        // update active flows keep the most restrictive distribution for each flow.
+        updated_active_flows = updated_active_flows.merge(new_flows);
+    }
+    updated_active_flows
 }
+
+fn get_flows_by_shared_links<'a, T: netgraph::Vertex>(flow_updated: &Flow<'a, T>, all_flows: &HashSet<Flow<'a, T>>, graph: &netgraph::Network<T>) -> HashMap<Link<T>, HashSet<Flow<'a, T>>> {
+    let flow_path = graph.get_path_between(&flow_updated.source, &flow_updated.destination).unwrap();
+    flow_path.links_set().iter().fold(HashMap::new(), |mut acc, link| {
+        // Collect all the flows that use this link
+        // Create a path from source to destination and use it to compare with other flows
+        let one_link_set = HashSet::from([link.clone()]);
+        let mut set_of_flows = all_flows.iter().filter_map(|flow| {
+            let path = graph.get_path_between(&flow.source, &flow.destination).unwrap();
+            if let Some(_) = path.links_set()
+                .intersection(&one_link_set).last() {
+                Some(flow.clone())
+            } else {
+                None
+            }
+        }).fold(HashSet::new(), |mut set, flow| {
+            set.insert(flow);
+            set
+        });
+        // if the updated flow == 0, remove it, else use replace to change or insert it
+        if flow_updated.used_bandwidth == 0 {
+            set_of_flows.remove(&flow_updated);
+        } else {
+            // add the new flow inside the flows_sharing_links if not already active, or
+            // update it with new values, replace add if not exists or update existing one.
+            set_of_flows.replace(flow_updated.clone());
+        }
+        acc.insert(link.clone(), set_of_flows);
+        acc
+    })
+}
+
 
 fn get_shared_links_and_impacted_flows<'a, T: netgraph::Vertex>(flow_updated: &Flow<'a, T>, all_flows: &HashSet<Flow<'a, T>>, graph: &netgraph::Network<T>) -> (HashSet<netgraph::Link<T>>, HashSet<Flow<'a, T>>) {
     let flow_path = graph.get_path_between(&flow_updated.source, &flow_updated.destination).unwrap();
@@ -125,11 +133,11 @@ fn get_shared_links_and_impacted_flows<'a, T: netgraph::Vertex>(flow_updated: &F
     )
 }
 
-fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(shared_links: HashSet<netgraph::Link<T>>, mut flows: HashSet<Flow<'a, T>>) -> HashSet<Flow<'a, T>> {
+fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(link: Link<T>, mut flows: HashSet<Flow<'a, T>>) -> HashSet<Flow<'a, T>> {
     // The calculation is based on the slowest link and the flows that need to go through.
 
     // Find the link with the minimum bandwidth
-    let available_bandwidth = shared_links.iter().map(|e| e.bandwidth).min().unwrap();
+    let available_bandwidth = link.bandwidth();
     // Calculate simple partitioning: everyone has the same.
     let initial_partition = available_bandwidth as f64 / flows.len() as f64;
 
@@ -143,7 +151,7 @@ fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(shared_links: HashS
 
     loop {
         let maxed_out_flows: HashSet<Flow<'a, T>> = flows.iter()
-            .filter(|f| (f.target_bandwidth as f64) < actual_partition)
+            .filter(|f| (f.used_bandwidth as f64) <= actual_partition && !f.is_hungry())
             .map(|f| f.clone())
             .collect();
 
@@ -152,7 +160,10 @@ fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(shared_links: HashS
         if maxed_out_flows.is_empty() {
             for f in flows {
                 let mut f = f.clone();
-                f.bandwidth = actual_partition as u32;
+                f.authorized_bandwidth = min(actual_partition as u32, f.max_allowed_bandwidth);
+                // we had to reduce its usage, so we consider it is using everything we gave him
+                f.used_bandwidth = f.authorized_bandwidth;
+                f.set_hungry(true);
                 new_flows.insert(f);
             }
             break;
@@ -160,8 +171,9 @@ fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(shared_links: HashS
 
         for f in &maxed_out_flows {
             let mut f = f.clone();
-            // Set its bandwidth to the target bandwidth, max it out babyyyy!
-            f.bandwidth = f.target_bandwidth;
+            // Set its bandwidth to the max allowed bandwidth, max it out babyyyy!
+            f.authorized_bandwidth = f.max_allowed_bandwidth;
+            f.set_hungry(false);
             new_flows.insert(f);
         }
         // remove the maxed out flows from the flows
@@ -169,11 +181,33 @@ fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(shared_links: HashS
 
         // Add the spare bandwidth to the actual partitioning.
         let spare_bandwidth = maxed_out_flows.iter()
-            .fold(0f64, |acc, flow| acc + (actual_partition - (flow.target_bandwidth as f64)));
+            .fold(0f64, |acc, flow| acc + (actual_partition - (flow.used_bandwidth as f64)));
         actual_partition = actual_partition + (spare_bandwidth / flows.len() as f64);
     }
 
     new_flows
+}
+
+trait MergeStricter<'a, T: netgraph::Vertex> {
+    fn merge(self, other: HashSet<Flow<'a, T>>) -> HashSet<Flow<'a, T>>;
+}
+
+impl<'a, T: netgraph::Vertex> MergeStricter<'a, T> for HashSet<Flow<'a, T>> {
+    fn merge(self, other: HashSet<Flow<'a, T>>) -> HashSet<Flow<'a, T>> {
+        let result = self.symmetric_difference(&other).map(|f| f.clone()).collect::<HashSet<Flow<'a, T>>>();
+        let selected = self.intersection(&other).fold(HashSet::new(), |mut acc, flow| {
+            // Get the most restrictive duplicate
+            let first = self.get(&flow).unwrap().authorized_bandwidth;
+            let second = other.get(&flow).unwrap().authorized_bandwidth;
+            if first < second {
+                acc.insert(self.get(&flow).unwrap().clone());
+            } else {
+                acc.insert(other.get(&flow).unwrap().clone());
+            }
+            acc
+        });
+        result.union(&selected).map(|f| f.clone()).collect::<HashSet<Flow<'a, T>>>()
+    }
 }
 
 
@@ -190,45 +224,7 @@ mod tests {
 
     use netgraph::PathStrategy;
     use crate::bwsync::{remove_flow, update_flows};
-
-
-    #[derive(Eq, Clone, Copy)]
-    pub struct Flow<T: netgraph::Vertex> {
-        pub source: T,
-        pub destination: T,
-        bandwidth: u32,
-        pub target_bandwidth: u32,
-    }
-
-    impl<T: netgraph::Vertex> PartialEq for Flow<T> {
-        fn eq(&self, other: &Self) -> bool {
-            self.source == other.source && self.destination == other.destination
-        }
-    }
-
-    impl<T: netgraph::Vertex> Hash for Flow<T> {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            (self.source.clone(), self.destination.clone()).hash(state)
-        }
-    }
-
-    impl<T: netgraph::Vertex> Display for Flow<T> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "[{} -> {} \t Bandwidth: {} \t / Target Bandwidth: {}]", self.source, self.destination, self.bandwidth, self.target_bandwidth)
-        }
-    }
-
-    impl<T: netgraph::Vertex> Debug for Flow<T> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            std::fmt::Display::fmt(&self, f)
-        }
-    }
-
-    impl<T: netgraph::Vertex> Flow<T> {
-        pub fn build(source: T, destination: T, bandwidth: u32, target_bandwidth: u32) -> Flow<T> {
-            Flow { source, destination, bandwidth, target_bandwidth }
-        }
-    }
+    use crate::data::Flow;
 
 
     #[derive(Debug)]
@@ -300,16 +296,16 @@ mod tests {
                 }
             }
 
-            let mut flow = Flow::build(0, 0, 0, 0);
+            let mut flow = Flow::build(&0, &0, 0, 0);
             if let Ok(src) = usize::from_str(iter.next().unwrap()) {
-                flow.source = src;
+                flow.source = &src;
             } else {
                 eprintln!("Cannot parse the source.");
                 continue;
             }
 
             if let Ok(dest) = usize::from_str(iter.next().unwrap()) {
-                flow.destination = dest;
+                flow.destination = &dest;
             } else {
                 eprintln!("Cannot parse the destination.");
                 continue;
@@ -317,7 +313,7 @@ mod tests {
 
             if let Command::ACTIVATE = command {
                 if let Ok(bandwidth) = u32::from_str(iter.next().unwrap()) {
-                    flow.target_bandwidth = bandwidth;
+                    flow.max_allowed_bandwidth = bandwidth;
                 } else {
                     eprintln!("Cannot parse the destination.");
                     continue;
@@ -331,7 +327,7 @@ mod tests {
     }
 
 
-    pub async fn launch_node<T: netgraph::Vertex>(graph: netgraph::Network<T>, node_list: HashMap<T, mpsc::Sender<(Command, Flow<T>)>>, mut receiver: mpsc::Receiver<(Command, Flow<T>)>, id: T) {
+    pub async fn launch_node<T: netgraph::Vertex>(graph: netgraph::Network<T>, node_list: HashMap<T, mpsc::Sender<(Command, Flow<'_, T>)>>, mut receiver: mpsc::Receiver<(Command, Flow<'_, T>)>, id: T) {
         // Used to store the active flows.
         // Node_id (destination) : Bandwidth
         let mut active_flows: HashSet<Flow<T>> = HashSet::new();
@@ -342,49 +338,48 @@ mod tests {
         // Start listening on events
         while let Some(event) = receiver.recv().await {
             match event {
-                (Command::ACTIVATE, flow) => {
-                    if flow.target_bandwidth == 0 {
+                (Command::ACTIVATE, mut flow) => {
+                    if flow.max_allowed_bandwidth == 0 {
                         eprintln!("Cannot create a node with a target bandwidth to 0");
                         continue; // loop on the next message
                     }
                     println!("[{}] Received new flow to activate", id);
 
-                    (active_flows, bw_graph) = update_flows(active_flows, &flow, &graph, bw_graph);
+                    (active_flows, bw_graph) = update_flows(active_flows, &mut flow, &graph, bw_graph);
                     println!("[{}] Finish adding, new flows: {:?}", id, active_flows);
 
                     // Finally, update everyone
                     // Now we can get the flow we added and transmit it to the other guys
                     let new_flow = active_flows.get(&flow).unwrap().clone();
                     println!("[{}] Updating the other guys", id);
-                    broadcast_flow(&node_list, &new_flow, &id).await;
+                    //broadcast_flow(&node_list, &new_flow, &id).await;
                 }
-                (Command::DEACTIVATE, flow) => {
+                (Command::DEACTIVATE, mut flow) => {
                     // Check if we are legit to deactivate the flow
                     if !active_flows.contains(&flow) || flow.source != id {
                         eprintln!("Cannot deactivate non-existing flow, or I am not the source.");
                         continue; // loop on the next message
                     }
-                    (active_flows, bw_graph) = remove_flow(active_flows, &flow, &graph);
+                    (active_flows, bw_graph) = remove_flow(active_flows, &mut flow, &graph);
                     // Finally update everyone!
                     // make sure that we set the flow bandwidth to 0
                     let mut new_flow = flow.clone();
-                    new_flow.bandwidth = 0;
-                    new_flow.target_bandwidth = 0;
+                    new_flow.authorized_bandwidth = 0;
+                    new_flow.max_allowed_bandwidth = 0;
                     println!("[{}] Updating the other guys", id);
-                    broadcast_flow(&node_list, &new_flow, &id).await;
+                    //broadcast_flow(&node_list, &new_flow, &id).await;
                 }
-                (Command::UPDATE, flow) => {
-                    if flow.target_bandwidth == 0 { // we are in deactivation
+                (Command::UPDATE, mut flow) => {
+                    if flow.max_allowed_bandwidth == 0 { // we are in deactivation
                         println!("[{}] Received update of a flow, need to remove it, calculating new flows", id);
-                        (active_flows, bw_graph) = remove_flow(active_flows, &flow, &graph);
+                        (active_flows, bw_graph) = remove_flow(active_flows, &mut flow, &graph);
                     } else { // we need to add / update a new flow
                         println!("[{}] Received update of a flow, need to update my state", id);
-                        (active_flows, bw_graph) = update_flows(active_flows, &flow, &graph, bw_graph);
+                        (active_flows, bw_graph) = update_flows(active_flows, &mut flow, &graph, bw_graph);
                     }
                     println!("[{}] Finish update, new flows: {:?}", id, active_flows);
                 }
             }
         }
     }
-
 }

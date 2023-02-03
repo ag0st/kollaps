@@ -36,26 +36,26 @@ pub struct RunnerConfig {
     #[clap(default_value_t=8081, long)]
     /// Port used by TCP and UDP connection to communicate events regarding cluster management
     /// between the nodes of the cluster.
-    pub cmanager_event_port: u16,
+    pub cmanager_port: u16,
     #[clap(default_value_t=8082, long)]
     /// Port used by TCP connection to communicate events regarding emulations between the nodes
     /// of the cluster.
-    pub emulation_event_port: u16,
-    #[clap(default_value_t=5, long)]
-    /// Time in second planned after all emulation core on the different machines are set, to begin
-    /// the emulation. It allows to synchronize the emulation cores between themself.
-    pub emulation_begin_delay: u16,
+    pub emanager_port: u16,
     #[clap(default_value_t=8080, long)]
     /// Port used by TCP connection to send new topology to emulate. This port is only used and opened
     /// by the leader to accept new topology. This is the only port that can be used from outside of the
     /// subnet. It allows user from outside to send new topologies to emulate.
-    pub topology_submission_port: u16,
+    pub omanager_port: u16,
     #[clap(default_value_t=8083, long)]
     /// Port used to negotiate performance testing configuration between nodes.
     pub perf_port: u16,
     #[clap(default_value_t=5201, long)]
     /// Port used by iPerf3 during a performance test.
     pub iperf3_port: u16,
+    #[clap(default_value_t=5, long)]
+    /// Time in second planned after all emulation core on the different machines are set, to begin
+    /// the emulation. It allows to synchronize the emulation cores between themself.
+    pub emulation_begin_delay: u16,
     #[clap(default_value_t=1000, long)]
     /// Size of the controller event channel.
     pub event_channel_size: usize,

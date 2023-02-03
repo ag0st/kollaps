@@ -18,8 +18,8 @@
         <schedule name="c1" time="0" action="join"/>
         <schedule name="c2" time="0" action="join"/>
         <schedule name="c3" time="0" action="join"/>
-        <schedule name="c1" time="300" action="crash"/>
-        <schedule name="c2" time="300" action="crash"/>
-        <schedule name="c3" time="300" action="crash"/>
+        <schedule name="c1" time="600" action="crash"/>
+        <schedule name="c2" time="600" action="crash"/>
+        <schedule name="c3" time="600" action="crash"/>
     </dynamic>
 </experiment>

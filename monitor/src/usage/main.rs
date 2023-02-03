@@ -16,7 +16,6 @@
 #![no_std]
 #![no_main]
 
-use core::borrow::BorrowMut;
 use core::mem::{self, MaybeUninit};
 use memoffset::offset_of;
 
@@ -81,15 +80,16 @@ fn measure_tcp_lifetime(skb: SkBuff) -> SkBuffResult {
                 match usage.get(&dst.addr) {
                     None => usage.set(&dst.addr, &len),
                     Some(value) => {
-                        let new_value = value + len;
-                        let delta_time_ns = current_time - old_time;
-                        if delta_time_ns > 25_000_000 { // 25 ms
-                            // Calculate the throughput Bytes/seconds
-                            // Can be inlined in the instruction bellow but the compiler will do it
-                            // for me and it is more clear this way.
-                            let delta_time_seconds = delta_time_ns / 1_000_000_000;
-                            // calculate throughput in Kbit/s
-                            let throughput = new_value * 8 / (delta_time_seconds * 1000);
+                        let new_value = (*value) + len;
+                        let delta_time_ns = current_time - (*old_time);
+                        if delta_time_ns > 100_000_000 { // 25 ms
+                            // Calculate throughput in KBit/s
+                            // Made it this way because no compatibility for floating points in eBPF
+                            // * 8 is for passing to bits
+                            // * 1_000_000_000 is like doing delta_time_ns / 1_000_000_000 to find second. But if we do this, no floating point and cannot express 0.0..001 seconds
+                            // / delta_time_ns to find the bandwidth (size/time)
+                            // * 1024 is like dividing again by 1024 to find KBit/s instead of bits/seconds
+                            let throughput = (new_value * 8 * 1_000_000_000) / (delta_time_ns * 1024);
                             perf_events.insert(skb.skb as *mut __sk_buff, &Message { dst: dst.addr, throughput: throughput as u32});
                             // // reset usage and time
                             usage.set(&dst.addr, &0);

@@ -249,32 +249,32 @@ pub fn parse_links(links: Node, name_to_node: &HashMap<String, crate::data::Node
             drop = link.attribute("drop").unwrap().parse().unwrap();
         }
         // Create the link inside the graph
-        network.add_edge_with_props(source, destination, bandwidth as u32, (latency, jitter), drop);
+        network.add_edge_with_props(source, destination, bandwidth? as u32, (latency, jitter), drop);
     }
     Ok(())
 }
 
-pub fn parse_bandwidth(bandwidth: String) -> f32 {
+pub fn parse_bandwidth(bandwidth: String) -> Result<f32> {
     let bandwidth_regex = Regex::new(r"([0-9]+)([KMG])bps").unwrap();
 
     if bandwidth_regex.is_match(&bandwidth) {
         let captures = bandwidth_regex.captures(&bandwidth).unwrap();
-        let base: f32 = captures.get(1).unwrap().as_str().parse().unwrap();
+        let mut base: f32 = captures.get(1).unwrap().as_str().parse().unwrap();
         let multiplier = captures.get(2).unwrap().as_str();
         if multiplier == "K" {
-            return base * 1000.0;
+           // base = base * 1000.0;
         }
         if multiplier == "M" {
-            return base * 1000.0 * 1000.0;
+            base = base * 1000.0;
         }
         if multiplier == "G" {
-            return base * 1000.0 * 1000.0 * 1000.0;
+            base = base * 1000.0 * 1000.0;
         }
+        Ok(base)
     } else {
         //print and fail
-        return 0.0;
+        Err(Error::new("xml parse bandwidth", ErrorKind::Parse, "cannot parse the bandwidth"))
     }
-    return 0.0;
 }
 
 pub fn parse_schedule(name_to_service: &HashMap<String, crate::data::Node>, dynamic: Option<Node>) -> Result<Vec<EmulationEvent>> {

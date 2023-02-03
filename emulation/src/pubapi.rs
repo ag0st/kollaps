@@ -7,39 +7,39 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use cgraph::{CGraph, CGraphUpdate};
-use common::{ClusterNodeInfo, TopologyMessage, TopologyRejectReason, Result, Error, ErrorKind, EmulationEvent};
+use common::{ClusterNodeInfo, OManagerMessage, TopologyRejectReason, Result, Error, ErrorKind, EmulationEvent};
 use netgraph::Network;
 use nethelper::{ALL_ADDR, DefaultHandler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding};
-use crate::data::{ControllerMessage, Emulation, Node};
+use crate::data::{EManagerMessage, Emulation, Node};
 use crate::orchestrator::Orchestrator;
 use crate::xmlgraphparser::parse_topology;
 
 
-pub struct OrchestrationManager {
-    my_info_controller: ClusterNodeInfo,
-    my_info_leader: ClusterNodeInfo,
-    local_sender: Sender<MessageWrapper<ControllerMessage>>,
+pub struct OManager {
+    my_info_emanager: ClusterNodeInfo,
+    my_info_omanager: ClusterNodeInfo,
+    local_sender: Sender<MessageWrapper<EManagerMessage>>,
     orchestrator: Orchestrator,
     cgraph_update_receiver: Receiver<CGraphUpdate>,
     emulations_and_their_nodes: HashMap<Uuid, HashMap<ClusterNodeInfo, bool>>,
 }
 
-impl OrchestrationManager {
-    pub async fn build_and_start(my_info: ClusterNodeInfo, local_sender: Sender<MessageWrapper<ControllerMessage>>,
-                                 cgraph_update_receiver: Receiver<CGraphUpdate>, connection_port: u16,
-                                 controllers_port: u16, original_cgraph: CGraph<ClusterNodeInfo>)
+impl OManager {
+    pub async fn build_and_start(my_info: ClusterNodeInfo, local_sender: Sender<MessageWrapper<EManagerMessage>>,
+                                 cgraph_update_receiver: Receiver<CGraphUpdate>, omanager_port: u16,
+                                 emanager_port: u16, original_cgraph: CGraph<ClusterNodeInfo>)
                                  -> Result<()> {
-        let mut my_info_controller = my_info.clone();
-        my_info_controller.port = controllers_port;
+        let mut my_info_emanager = my_info.clone();
+        my_info_emanager.port = emanager_port;
 
-        let mut my_info_leader = my_info.clone();
-        my_info_leader.port = connection_port;
+        let mut my_info_omanager = my_info.clone();
+        my_info_omanager.port = omanager_port;
 
-        let manager = OrchestrationManager {
-            my_info_controller,
-            my_info_leader,
+        let manager = OManager {
+            my_info_emanager,
+            my_info_omanager,
             local_sender,
-            orchestrator: Orchestrator::new(original_cgraph, controllers_port),
+            orchestrator: Orchestrator::new(original_cgraph, emanager_port),
             cgraph_update_receiver,
             emulations_and_their_nodes: HashMap::new(),
         };
@@ -50,10 +50,10 @@ impl OrchestrationManager {
     async fn accept_topology(mut self) -> Result<()> {
         let (sender, mut receiver) = mpsc::channel(10);
         // Create the handler
-        let handler = DefaultHandler::<TopologyMessage>::new(sender.clone());
+        let handler = DefaultHandler::<OManagerMessage>::new(sender.clone());
 
         // listen on TCP
-        let mut binding = TCP::bind_addr((ALL_ADDR, self.my_info_leader.port), Some(handler)).await.unwrap();
+        let mut binding = TCP::bind_addr((ALL_ADDR, self.my_info_omanager.port), Some(handler)).await.unwrap();
         binding.listen().unwrap();
 
         // todo: For debugging
@@ -63,7 +63,7 @@ impl OrchestrationManager {
         file.read_to_string(&mut data).await
             .expect("Error while reading file");
         let (tx, _rx) = oneshot::channel();
-        sender.send(MessageWrapper{ message: TopologyMessage::NewTopology(data), sender: Some(tx)}).await.unwrap();
+        sender.send(MessageWrapper{ message: OManagerMessage::NewTopology(data), sender: Some(tx)}).await.unwrap();
 
 
         loop {
@@ -89,15 +89,15 @@ impl OrchestrationManager {
 
     async fn abort_emulations(&mut self, uuids: Vec<Uuid>) {
         for uuid in uuids {
-            let mess = ControllerMessage::EmulationStop(uuid.to_string());
+            let mess = EManagerMessage::ExperimentStop(uuid.to_string());
             for (node, _) in self.emulations_and_their_nodes.get(&uuid).unwrap() {
                 // Send an abort for this
                 let m = mess.clone();
-                if self.my_info_controller.eq(node) {
+                if self.my_info_emanager.eq(node) {
                     self.local_sender.send(MessageWrapper { message: m, sender: None }).await
                         .expect(&*format!("[WARNING]: Wanted to abort emulation {} on local machine, error", uuid.to_string()));
                 } else {
-                    let mut binding: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                    let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                     let n = node.clone();
                     binding.send_to(m, n).await
                         .expect(&*format!("[WARNING]: Wanted to abort emulation {} on node {}, node unreachable", uuid.to_string(), node));
@@ -107,16 +107,16 @@ impl OrchestrationManager {
         }
     }
 
-    async fn handle_experiment_message(&mut self, message: MessageWrapper<TopologyMessage>) {
+    async fn handle_experiment_message(&mut self, message: MessageWrapper<OManagerMessage>) {
         match message {
-            MessageWrapper { message: TopologyMessage::NewTopology(top), sender: Some(sender) } => {
+            MessageWrapper { message: OManagerMessage::NewTopology(top), sender: Some(sender) } => {
                 let uuid = Uuid::new_v4();
                 match parse_topology(top, uuid.clone()) {
                     Ok((network, events)) => {
                         match self.orchestrator.new_emulation(network, uuid.clone()) {
                             Ok(possible_net) => {
                                 match possible_net {
-                                    None => sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap(),
+                                    None => sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap(),
                                     Some((network, cluster_nodes_affected)) => {
                                         let id = uuid.clone();
                                         // Save the emulation
@@ -130,31 +130,31 @@ impl OrchestrationManager {
                                                 // Todo: Just for debug sake
                                                 // sender.send(Some(TopologyMessage::Accepted)).unwrap()
                                             },
-                                            Err(_) => sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap()
+                                            Err(_) => sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap()
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
                                 eprintln!("[NEW_TOPOLOGY]: Error when finding an dispatch for the topology: {}", e);
-                                sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap();
+                                sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap();
                             }
                         }
                     }
                     Err(e) => {
                         eprintln!("[NEW TOPOLOGY]: Cannot parse {}", e);
-                        sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::BadFile(e.to_string())))).unwrap();
+                        sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::BadFile(e.to_string())))).unwrap();
                     }
                 }
             }
-            MessageWrapper { message: TopologyMessage::Abort(id), sender: Some(sender) } => {
+            MessageWrapper { message: OManagerMessage::Abort(id), sender: Some(sender) } => {
                 // We receive an abort, we need to stop this emulation
                 let id = Uuid::parse_str(&*id).unwrap();
                 let uuids = vec![id];
                 self.abort_emulations(uuids).await;
                 sender.send(None).unwrap();
             }
-            MessageWrapper { message: TopologyMessage::CleanStop((id, node, app_index)), sender: Some(sender) } => {
+            MessageWrapper { message: OManagerMessage::CleanStop((id, node, app_index)), sender: Some(sender) } => {
                 // We receive an abort, we need to stop this emulation
                 let id = Uuid::parse_str(&*id).unwrap();
                 if let Err(e) = self.orchestrator.stop_app_emulation_on(&id, &node, app_index) {
@@ -162,7 +162,7 @@ impl OrchestrationManager {
                 }
                 sender.send(None).unwrap();
             }
-            MessageWrapper { message: TopologyMessage::EmulationReady((id, node)), sender: Some(sender) } => {
+            MessageWrapper { message: OManagerMessage::EmulationReady((id, node)), sender: Some(sender) } => {
                 // We receive an abort, we need to stop this emulation
                 let id = Uuid::parse_str(&*id).unwrap();
                 *self.emulations_and_their_nodes.get_mut(&id).unwrap().get_mut(&node).unwrap() = true;
@@ -176,15 +176,15 @@ impl OrchestrationManager {
                 }
                 if ready {
                     // Send to all that the emulation is ready
-                    let mess = ControllerMessage::ExperimentReady(id.to_string());
+                    let mess = EManagerMessage::ExperimentReady(id.to_string());
 
                     for (node, _) in self.emulations_and_their_nodes.get(&id).unwrap() {
                         let m = mess.clone();
-                        if self.my_info_controller.eq(node) {
+                        if self.my_info_emanager.eq(node) {
                             self.local_sender.send(MessageWrapper { message: m, sender: None }).await
                                 .expect(&*format!("[WARNING]: Wanted to say emulation ready {} on local machine, error", id.to_string()));
                         } else {
-                            let mut binding: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                            let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                             let n = node.clone();
                             binding.send_to(m, n).await
                                 .expect(&*format!("[WARNING]: Wanted to say emulation ready {} on node {}, node unreachable", id.to_string(), node));
@@ -194,7 +194,7 @@ impl OrchestrationManager {
                 sender.send(None).unwrap();
             }
             MessageWrapper { message: _message, sender: Some(sender) } => {
-                let _ = sender.send(Some(TopologyMessage::Rejected(TopologyRejectReason::BadFile("You need to send file via NewTopology enumeration".to_string()))));
+                let _ = sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::BadFile("You need to send file via NewTopology enumeration".to_string()))));
             }
             _ => eprintln!("[ACCEPT TOPOLOGY]: Unrecognized message")
         }
@@ -208,27 +208,27 @@ impl OrchestrationManager {
         let emul = Emulation::build(uuid, &network, &events, leader);
         // Create the message for the different cluster nodes
         // Send my info leader for them to contact me if there is something bad happening with an emulation
-        let mess = ControllerMessage::EmulationStart(self.my_info_leader.clone(), emul.clone());
+        let mess = EManagerMessage::ExperimentNew(self.my_info_omanager.clone(), emul.clone());
         // Send the topology to all concerned cluster nodes
         for i in 0..nodes.len() {
             // If affected to me, directly send it through the local_sender
             let m = mess.clone();
-            if let Err(_) = if nodes[i] == self.my_info_controller {
+            if let Err(_) = if nodes[i] == self.my_info_emanager {
                 if let Err(e) = self.local_sender.send(MessageWrapper { message: m, sender: None }).await {
                     return Err(Error::wrap("send start emulation", ErrorKind::CommandFailed, "cannot send new topology to local node", e));
                 }
                 Ok(())
             } else {
-                let mut binding: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                 let n = nodes[i].clone();
                 binding.send_to(m, n).await
             } {
                 // If we cannot send to one, we need to abort all the others to which we already sent
                 for j in 0..i {
-                    let mut binding: TCPBinding<ControllerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                    let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                     let n = nodes[j].clone();
                     let id = emul.uuid().to_string();
-                    let _ = binding.send_to(ControllerMessage::EmulationStop(id), n)
+                    let _ = binding.send_to(EManagerMessage::ExperimentStop(id), n)
                         .await;
                 }
                 return Err(Error::new("send start emulation", ErrorKind::CommandFailed, "Error when sending emulation to everyone. Destination not reached."));
