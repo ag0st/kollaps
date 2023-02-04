@@ -7,7 +7,7 @@ use uuid::Uuid;
 use cgraph::{CGraph, CGraphUpdate};
 use common::{ClusterNodeInfo, EmulationEvent, Error, ErrorKind, OManagerMessage, Result, TopologyRejectReason};
 use netgraph::Network;
-use nethelper::{ALL_ADDR, DefaultHandler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding};
+use nethelper::{ALL_ADDR, DefaultHandler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, UDP};
 
 use crate::data::{EManagerMessage, Emulation, Node};
 use crate::orchestrator::Orchestrator;
@@ -51,8 +51,10 @@ impl OManager {
         let handler = DefaultHandler::<OManagerMessage>::new(sender.clone());
 
         // listen on TCP
+        let mut udp_binding = UDP::bind_addr((ALL_ADDR, self.my_info_omanager.port), Some(handler.clone())).await.unwrap();
         let mut binding = TCP::bind_addr((ALL_ADDR, self.my_info_omanager.port), Some(handler)).await.unwrap();
         binding.listen().unwrap();
+        udp_binding.listen().unwrap();
 
         loop {
             tokio::select! {
@@ -71,7 +73,7 @@ impl OManager {
                     },
                 }
             }
-        }
+            }
         }
     }
 
