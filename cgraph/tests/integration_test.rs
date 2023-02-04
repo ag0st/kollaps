@@ -89,7 +89,7 @@ fn launch_test(nb_ter: usize, nb_inter: usize, diff_speed: usize, sufficient: us
         while let Some(other) = cgraph.find_missing_from_me(me, sufficient) {
             let speed = net.bandwidth_between(&i, &other.info()).unwrap();
             result.nb_tests += 1;
-            let useful = cgraph.add_link_direct_test(me, other, speed as usize).expect("cannot add link");
+            let useful = cgraph.add_link_direct_test(&me, &other, speed as usize).expect("cannot add link");
             if useful { result.nb_useful += 1; }
         }
     }

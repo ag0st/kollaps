@@ -516,7 +516,7 @@ impl Ctrl {
 
             println!("[PERF]: Test finished");
             println!("[PERF]: me -> {} = {}", other.info(), speed);
-            self.cgraph.add_link_direct_test(me.clone(), other, speed as usize)?;
+            self.cgraph.add_link_direct_test(&me, &other, speed as usize)?;
         }
 
         Ok(())

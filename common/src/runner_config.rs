@@ -56,6 +56,10 @@ pub struct RunnerConfig {
     /// Time in second planned after all emulation core on the different machines are set, to begin
     /// the emulation. It allows to synchronize the emulation cores between themself.
     pub emulation_begin_delay: u16,
+    #[clap(default_value_t=4, long)]
+    /// Time in second planned after all emulation core on the different machines are set, to begin
+    /// the emulation. It allows to synchronize the emulation cores between themself.
+    pub max_load_per_node: usize,
     #[clap(default_value_t=1000, long)]
     /// Size of the controller event channel.
     pub event_channel_size: usize,

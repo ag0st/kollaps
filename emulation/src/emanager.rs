@@ -72,6 +72,7 @@ impl EManager {
             let ls = sender.clone();
             let emanagers_port = self.config.emanager_port;
             let omanager_port = self.config.omanager_port;
+            let max_load = self.config.max_load_per_node;
             tokio::spawn(async move {
                 OManager::build_and_start(
                     me,
@@ -79,7 +80,9 @@ impl EManager {
                     cgraph_update_receiver.unwrap(),
                     omanager_port,
                     emanagers_port,
-                    cgraph).await
+                    cgraph,
+                    max_load,
+                ).await
             });
         }
 

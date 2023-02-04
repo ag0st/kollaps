@@ -190,9 +190,9 @@ impl<I: Clone + Eq> CGraph<I> {
     }
 
 
-    pub fn add_link_direct_test(&mut self, from: Node<I>, to: Node<I>, speed: usize) -> Result<bool> {
+    pub fn add_link_direct_test(&mut self, from: &Node<I>, to: &Node<I>, speed: usize) -> Result<bool> {
         // check that both nodes are in the graph
-        if !self.nodes.contains(&from) || !self.nodes.contains(&to) {
+        if !self.nodes.contains(from) || !self.nodes.contains(to) {
             return Err(
                 Self::err_producer().create(ErrorKind::NotFound,
                                             "your node is not in the system, add it first",

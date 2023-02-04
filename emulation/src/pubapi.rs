@@ -27,7 +27,7 @@ pub struct OManager {
 impl OManager {
     pub async fn build_and_start(my_info: ClusterNodeInfo, local_sender: Sender<MessageWrapper<EManagerMessage>>,
                                  cgraph_update_receiver: Receiver<CGraphUpdate>, omanager_port: u16,
-                                 emanager_port: u16, original_cgraph: CGraph<ClusterNodeInfo>)
+                                 emanager_port: u16, original_cgraph: CGraph<ClusterNodeInfo>, max_load_per_node: usize)
                                  -> Result<()> {
         let mut my_info_emanager = my_info.clone();
         my_info_emanager.port = emanager_port;
@@ -39,7 +39,7 @@ impl OManager {
             my_info_emanager,
             my_info_omanager,
             local_sender,
-            orchestrator: Orchestrator::new(original_cgraph, emanager_port),
+            orchestrator: Orchestrator::new(original_cgraph, emanager_port, max_load_per_node),
             cgraph_update_receiver,
             emulations_and_their_nodes: HashMap::new(),
         };
