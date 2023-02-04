@@ -296,24 +296,26 @@ mod tests {
                 }
             }
 
-            let mut flow = Flow::build(&0, &0, 0, 0);
+            let mut source = 0;
+            let mut destination = 0;
+            let mut bandwidth = 0;
             if let Ok(src) = usize::from_str(iter.next().unwrap()) {
-                flow.source = &src;
+                source = src;
             } else {
                 eprintln!("Cannot parse the source.");
                 continue;
             }
 
             if let Ok(dest) = usize::from_str(iter.next().unwrap()) {
-                flow.destination = &dest;
+                destination = dest;
             } else {
                 eprintln!("Cannot parse the destination.");
                 continue;
             }
 
             if let Command::ACTIVATE = command {
-                if let Ok(bandwidth) = u32::from_str(iter.next().unwrap()) {
-                    flow.max_allowed_bandwidth = bandwidth;
+                if let Ok(bw) = u32::from_str(iter.next().unwrap()) {
+                    bandwidth = bw;
                 } else {
                     eprintln!("Cannot parse the destination.");
                     continue;
@@ -322,7 +324,8 @@ mod tests {
 
             // send the command to the node
             println!("sending command to the node");
-            senders.get(&flow.source).unwrap().send((command, flow)).await.unwrap();
+            // let mut flow = Flow::build(&source, &destination, bandwidth, 0);
+            // senders.get(flow.source).unwrap().send((command, flow)).await.unwrap();
         }
     }
 
@@ -356,7 +359,7 @@ mod tests {
                 }
                 (Command::DEACTIVATE, mut flow) => {
                     // Check if we are legit to deactivate the flow
-                    if !active_flows.contains(&flow) || flow.source != id {
+                    if !active_flows.contains(&flow) || *flow.source != id {
                         eprintln!("Cannot deactivate non-existing flow, or I am not the source.");
                         continue; // loop on the next message
                     }
