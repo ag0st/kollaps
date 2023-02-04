@@ -141,7 +141,6 @@ impl Ctrl {
         }
 
         while let Some(event) = self.events_receiver.recv().await {
-            println!("[EVENT RECEIVED]: {}", event);
             match event {
                 MessageWrapper { message: Event::CGraphGet, sender: Some(sender) } => {
                     // I am in TCP
@@ -195,7 +194,7 @@ impl Ctrl {
                             }
                         }
                         CJQResponseKind::Wait(duration) => {
-                            println!("Need to wait {:#?} before adding myself", duration);
+                            println!("[CLUSTER ADD] Need to wait {:#?} before adding myself", duration);
                             self.send_event_after(duration, Event::CJQRetry);
                         }
                     }
@@ -255,7 +254,7 @@ impl Ctrl {
                 }
                 MessageWrapper { message: Event::NodeFailure(info), sender: Some(sender) } => {
                     // Here only if we are the leader
-
+                    println!("[HEARTBEAT]: NodeFailure : {}", info);
                     if let Some(missed_heartbeat) = self.heartbeat_misses.get(&info) {
                         let missed_heartbeat = missed_heartbeat.clone();
                         if missed_heartbeat + 1 >= self.config.heartbeat_misses {
@@ -324,7 +323,6 @@ impl Ctrl {
             heartbeat_binding.listen().unwrap();
 
             // Send the broadcast on this socket
-            println!("[HEARTBEAT CHECK]: Sending the Heartbeat broadcast");
             heartbeat_binding
                 .broadcast(Event::CHeartbeat((my_info.clone(), cluster_id.to_string())), event_port)
                 .await
@@ -335,7 +333,6 @@ impl Ctrl {
 
 
             // collect the results
-            println!("[HEARTBEAT CHECK]: Collecting the Heartbeat responses");
             let mut received_info = HashSet::new();
             while let Ok(info) = receiver.try_recv() {
                 received_info.insert(info);
@@ -347,7 +344,9 @@ impl Ctrl {
             let remaining: HashSet<ClusterNodeInfo> = cgraph.nodes().iter()
                 .filter(|n| !received_info.contains(&n.info()))
                 .map(|n| n.info()).collect();
-            println!("[HEARTBEAT CHECK]: Missing nodes: {:?}", remaining);
+            if remaining.len() > 0 {
+                println!("[HEARTBEAT CHECK]: Missing nodes: {:?}", remaining);
+            }
 
 
             // Ask to clear the missed heartbeat map if the node has rejoined the cluster
