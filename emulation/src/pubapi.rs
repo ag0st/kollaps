@@ -1,19 +1,17 @@
 use std::collections::HashMap;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
 
-
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
+
 use cgraph::{CGraph, CGraphUpdate};
-use common::{ClusterNodeInfo, OManagerMessage, TopologyRejectReason, Result, Error, ErrorKind, EmulationEvent};
+use common::{ClusterNodeInfo, EmulationEvent, Error, ErrorKind, OManagerMessage, Result, TopologyRejectReason};
 use netgraph::Network;
 use nethelper::{ALL_ADDR, DefaultHandler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding};
+
 use crate::data::{EManagerMessage, Emulation, Node};
 use crate::orchestrator::Orchestrator;
 use crate::xmlgraphparser::parse_topology;
-
 
 pub struct OManager {
     my_info_emanager: ClusterNodeInfo,
@@ -56,16 +54,6 @@ impl OManager {
         let mut binding = TCP::bind_addr((ALL_ADDR, self.my_info_omanager.port), Some(handler)).await.unwrap();
         binding.listen().unwrap();
 
-        // todo: For debugging
-        let mut file = File::open("/home/agost/workspace/MSc/development/kollaps/emulation/src/topology.xml").await
-            .expect("File not found");
-        let mut data = String::new();
-        file.read_to_string(&mut data).await
-            .expect("Error while reading file");
-        let (tx, _rx) = oneshot::channel();
-        sender.send(MessageWrapper{ message: OManagerMessage::NewTopology(data), sender: Some(tx)}).await.unwrap();
-
-
         loop {
             tokio::select! {
             Some(message) = receiver.recv() => {
@@ -99,8 +87,9 @@ impl OManager {
                 } else {
                     let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                     let n = node.clone();
-                    binding.send_to(m, n).await
-                        .expect(&*format!("[WARNING]: Wanted to abort emulation {} on node {}, node unreachable", uuid.to_string(), node));
+                    if let Err(_) = binding.send_to(m, n).await {
+                        println!("[WARNING]: Wanted to abort emulation {} on node {}, node unreachable", uuid.to_string(), node);
+                    }
                 }
             }
             self.emulations_and_their_nodes.remove_entry(&uuid);
@@ -125,11 +114,10 @@ impl OManager {
                                             acc
                                         });
                                         self.emulations_and_their_nodes.insert(id, nodes_ready_map);
-                                        match self.send_start_emulation(id, network, cluster_nodes_affected, events).await {
+                                        match self.send_new_emulation(id, network, cluster_nodes_affected, events).await {
                                             Ok(_) => {
-                                                // Todo: Just for debug sake
-                                                // sender.send(Some(TopologyMessage::Accepted)).unwrap()
-                                            },
+                                                sender.send(Some(OManagerMessage::Accepted)).unwrap()
+                                            }
                                             Err(_) => sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap()
                                         }
                                     }
@@ -158,7 +146,7 @@ impl OManager {
                 // We receive an abort, we need to stop this emulation
                 let id = Uuid::parse_str(&*id).unwrap();
                 if let Err(e) = self.orchestrator.stop_app_emulation_on(&id, &node, app_index) {
-                    eprintln!("Cannot clean stop the emulation {} on node {} with app_index: {}. Reason: {}", id.to_string(), node, app_index, e);
+                    eprintln!("[WARNING] Cannot clean stop the emulation {} on node {} with app_index: {}. Reason: {}", id.to_string(), node, app_index, e);
                 }
                 sender.send(None).unwrap();
             }
@@ -186,8 +174,12 @@ impl OManager {
                         } else {
                             let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                             let n = node.clone();
-                            binding.send_to(m, n).await
-                                .expect(&*format!("[WARNING]: Wanted to say emulation ready {} on node {}, node unreachable", id.to_string(), node));
+                            if let Err(_) = binding.send_to(m, n).await {
+                                // If a host is not reachable, we need to abort directly this emulation
+                                println!("[WARNING]: Wanted to say emulation ready {} on node {}, node unreachable", id.to_string(), node);
+                                self.abort_emulations(vec![id]).await;
+                                break;
+                            }
                         }
                     }
                 }
@@ -201,7 +193,7 @@ impl OManager {
     }
 
     // Cannot ask for references because it is in an await.
-    async fn send_start_emulation(&self, uuid: Uuid, network: Network<Node>, nodes: Vec<ClusterNodeInfo>, events: Vec<EmulationEvent>) -> Result<()> {
+    async fn send_new_emulation(&self, uuid: Uuid, network: Network<Node>, nodes: Vec<ClusterNodeInfo>, events: Vec<EmulationEvent>) -> Result<()> {
         // We found a topology! let's create a new one
         // Choose a leader randomly (first we find)
         let leader = nodes[0].clone();

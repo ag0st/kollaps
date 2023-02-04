@@ -513,5 +513,6 @@ mod test {
                 println!("{:?}", distrib);
             }
         }
+        assert_eq!(number_of_experiments, 13);
     }
 }

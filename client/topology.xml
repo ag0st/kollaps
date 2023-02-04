@@ -1,0 +1,25 @@
+<experiment boot="kollaps:1.0">
+    <services>
+        <service kind="container" ip="192.168.1.200" name="c1" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.1.201" name="c2" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.1.202" name="c3" image="kollaps-iperf:1.0" command="/bin/sh"/>
+    </services>
+    <bridges>
+        <bridge name="s1"/>
+        <bridge name="s2"/>
+    </bridges>
+    <links>
+        <link origin="c1" dest="s1" latency="5" bandwidth="100Mbps"/>
+        <link origin="c2" dest="s1" latency="5" bandwidth="50Mbps"/>
+        <link origin="s1" dest="s2" bandwidth="100Mbps"/>
+        <link origin="s2" dest="c3" bandwidth="100Mbps"/>
+    </links>
+    <dynamic>
+        <schedule name="c1" time="0" action="join"/>
+        <schedule name="c2" time="0" action="join"/>
+        <schedule name="c3" time="0" action="join"/>
+        <schedule name="c1" time="600" action="crash"/>
+        <schedule name="c2" time="600" action="crash"/>
+        <schedule name="c3" time="600" action="crash"/>
+    </dynamic>
+</experiment>
