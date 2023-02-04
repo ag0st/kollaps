@@ -101,13 +101,17 @@ impl OManager {
     async fn handle_experiment_message(&mut self, message: MessageWrapper<OManagerMessage>) {
         match message {
             MessageWrapper { message: OManagerMessage::NewTopology(top), sender: Some(sender) } => {
+                println!("[OManager] : New Topology");
                 let uuid = Uuid::new_v4();
                 match parse_topology(top, uuid.clone()) {
                     Ok((network, events)) => {
                         match self.orchestrator.new_emulation(network, uuid.clone()) {
                             Ok(possible_net) => {
                                 match possible_net {
-                                    None => sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap(),
+                                    None => {
+                                        println!("[OManager] : Topology Rejected: {}", TopologyRejectReason::NoDeploymentFound);
+                                        sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap();
+                                    },
                                     Some((network, cluster_nodes_affected)) => {
                                         let id = uuid.clone();
                                         // Save the emulation
@@ -118,21 +122,25 @@ impl OManager {
                                         self.emulations_and_their_nodes.insert(id, nodes_ready_map);
                                         match self.send_new_emulation(id, network, cluster_nodes_affected, events).await {
                                             Ok(_) => {
-                                                sender.send(Some(OManagerMessage::Accepted)).unwrap()
+                                                println!("[OManager] : Topology Accepted");
+                                                sender.send(Some(OManagerMessage::Accepted)).unwrap();
                                             }
-                                            Err(_) => sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap()
+                                            Err(_) => {
+                                                println!("[OManager] : Error sending new topology to EManagers");
+                                                sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap()
+                                            }
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[NEW_TOPOLOGY]: Error when finding an dispatch for the topology: {}", e);
+                                eprintln!("[OManager]: Error when finding a dispatch for the topology: {}", e);
                                 sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::NoDeploymentFound))).unwrap();
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("[NEW TOPOLOGY]: Cannot parse {}", e);
+                        eprintln!("[OManager]: Cannot parse {}", e);
                         sender.send(Some(OManagerMessage::Rejected(TopologyRejectReason::BadFile(e.to_string())))).unwrap();
                     }
                 }

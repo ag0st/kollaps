@@ -35,6 +35,6 @@ pub struct ClientConfig {
     #[clap(default_value_t = String::from("/home/agost/workspace/MSc/development/kollaps/client/topology.xml"), short, long)]
     /// The socket used by the caller to send Traffic Control commands
     pub topology_file: String,
-    #[clap(default_value_t=8083, long)]
+    #[clap(default_value_t=8080, long)]
     pub omanger_port: u16,
 }
