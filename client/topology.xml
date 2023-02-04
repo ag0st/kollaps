@@ -1,8 +1,8 @@
 <experiment boot="kollaps:1.0">
     <services>
-        <service kind="container" ip="192.168.1.200" name="c1" image="kollaps-iperf:1.0" command="/bin/sh"/>
-        <service kind="container" ip="192.168.1.201" name="c2" image="kollaps-iperf:1.0" command="/bin/sh"/>
-        <service kind="container" ip="192.168.1.202" name="c3" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.100.200" name="c1" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.100.201" name="c2" image="kollaps-iperf:1.0" command="/bin/sh"/>
+        <service kind="container" ip="192.168.100.202" name="c3" image="kollaps-iperf:1.0" command="/bin/sh"/>
     </services>
     <bridges>
         <bridge name="s1"/>
@@ -18,8 +18,8 @@
         <schedule name="c1" time="0" action="join"/>
         <schedule name="c2" time="0" action="join"/>
         <schedule name="c3" time="0" action="join"/>
-        <schedule name="c1" time="600" action="crash"/>
-        <schedule name="c2" time="600" action="crash"/>
-        <schedule name="c3" time="600" action="crash"/>
+        <schedule name="c1" time="100" action="crash"/>
+        <schedule name="c2" time="100" action="crash"/>
+        <schedule name="c3" time="100" action="crash"/>
     </dynamic>
 </experiment>

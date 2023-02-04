@@ -160,11 +160,16 @@ impl Orchestrator {
     }
 
     pub fn update_with_cgraph(&mut self, mut cgraph: CGraph<ClusterNodeInfo>) -> Result<Vec<Uuid>> {
+        println!("[Orchestrator] : Updating with CGraph");
         Self::convert_cgraph_nodeinfo(self.emanagers_port, &mut cgraph);
+        println!("[Orchestrator] : Old Residual Graph Size : {}", self.residual_graph.size());
+
         let (matrix, nodes) = cgraph.speeds();
         // check all nodes that are / are not in our cluster
         let to_remove = self.host_mapping.iter().filter(|n| !nodes.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
-        let to_add = nodes.iter().filter(|n| self.host_mapping.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
+        let to_add = nodes.iter().filter(|n| !self.host_mapping.contains(n)).map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>();
+        println!("[Orchestrator] : To Remove : {:?}", to_remove);
+        println!("[Orchestrator] : To Add : {:?}", to_add);
 
         let mut uuid_affected_by_remove: HashSet<Uuid> = HashSet::new();
         for node in to_remove {
@@ -174,6 +179,7 @@ impl Orchestrator {
             }
         }
         let uuid_affected_by_remove = uuid_affected_by_remove.iter().map(|u| u.clone()).collect::<Vec<Uuid>>();
+        println!("[Orchestrator] : UUID Affected by removes : {:?}", uuid_affected_by_remove);
 
         if !to_add.is_empty() {
             let nodes_to_index = (0..nodes.len()).fold(HashMap::with_capacity(nodes.len()), |mut acc, index| {
@@ -202,6 +208,7 @@ impl Orchestrator {
                 });
             }
         }
+        println!("[Orchestrator] : New Residual Graph Size : {}", self.residual_graph.size());
         Ok(uuid_affected_by_remove)
     }
 
