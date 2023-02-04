@@ -282,7 +282,7 @@ impl EmulCore {
                                     drop: Some(drop),
                                 };
                                 this.my_apps.get_mut(src).unwrap()
-                                    .0.send(EmulMessage::TCUpdate(tc_conf)).await.unwrap();
+                                    .0.send(EmulMessage::TCUpdate(tc_conf)).await?;
                             }
 
                             broadcast_flow(&flow_conf, &this.other_hosts, this.emul_id.clone()).await?;
@@ -341,8 +341,8 @@ impl EmulCore {
                                 stop_app_if_necessary(node.clone(), dock.clone()).await?;
                                 *status = AppStatus::Crashed;
                                 // Send to the orchestrator that we finished our emulation for this app
-                                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
-                                bind.send_to(OManagerMessage::CleanStop((this.emul_id.to_string(), this.myself.clone(), node.as_app().index())), this.cluster_leader.clone()).await.unwrap();
+                                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(None).await?;
+                                bind.send_to(OManagerMessage::CleanStop((this.emul_id.to_string(), this.myself.clone(), node.as_app().index())), this.cluster_leader.clone()).await?;
                             }
                         }
                     }
@@ -357,7 +357,7 @@ impl EmulCore {
                     let mut tc_conf = TCConf::default(flow.destination.as_app().ip_addr());
                     tc_conf.bandwidth_kbs(flow.authorized_bandwidth);
                     this.my_apps.get_mut(flow.source).unwrap()
-                        .0.send(EmulMessage::TCUpdate(tc_conf)).await.unwrap();
+                        .0.send(EmulMessage::TCUpdate(tc_conf)).await?;
                     println!("[EmulCore] BW UPDATE : {} -> {} : {}", flow.source.as_app().name(), flow.destination.as_app().name(), flow.authorized_bandwidth)
                 }
             }
@@ -522,7 +522,7 @@ async fn launch_reporter_for_app(emul_id: Uuid, app: &Application, dock: &Docker
         .arg("--tc-socket").arg(tc_socket_name.clone())
         .arg("--ip").arg(format!("{}", app.ip_addr()))
         .kill_on_drop(true)
-        .spawn().expect(&*format!("Cannot launch reporter for app {}", id));
+        .spawn()?;
 
     Ok((child, tc_socket_name))
 }
