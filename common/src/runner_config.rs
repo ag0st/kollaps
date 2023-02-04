@@ -5,7 +5,7 @@ use clap::Parser;
 /// Base application used for Kollaps to maintain a cluster of machines
 /// This is in development!
 pub struct RunnerConfig {
-    #[clap(default_value_t=false, long)]
+    #[clap(long)]
     /// Start this application as leader
     pub leader: bool,
     #[clap(short('a'), long)]
