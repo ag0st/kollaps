@@ -115,7 +115,7 @@ impl OManager {
                                     Some((network, cluster_nodes_affected)) => {
                                         let id = uuid.clone();
                                         // Save the emulation
-                                        let nodes_ready_map = cluster_nodes_affected.iter().fold(HashMap::new(), |mut acc, n| {
+                                        let nodes_ready_map = (&cluster_nodes_affected).iter().fold(HashMap::new(), |mut acc, n| {
                                             acc.insert(n.clone(), false);
                                             acc
                                         });
@@ -207,6 +207,7 @@ impl OManager {
         // We found a topology! let's create a new one
         // Choose a leader randomly (first we find)
         let leader = nodes[0].clone();
+        println!("[OManager] : Sending new Emulation to these nodes: {:?}", nodes);
         let emul = Emulation::build(uuid, &network, &events, leader);
         // Create the message for the different cluster nodes
         // Send my info leader for them to contact me if there is something bad happening with an emulation
@@ -221,8 +222,9 @@ impl OManager {
                 }
                 Ok(())
             } else {
-                let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                 let n = nodes[i].clone();
+                println!("[OManager]: Sending new Emulation to {}", n);
+                let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                 binding.send_to(m, n).await
             } {
                 // If we cannot send to one, we need to abort all the others to which we already sent

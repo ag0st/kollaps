@@ -94,7 +94,8 @@ impl Orchestrator {
         // Save the emulation for when we need to remove it
         self.emulations.insert(emul_id, (matrix, equivalence));
 
-        Ok(Some((network, cluster_nodes_affected.iter().map(|n| n.clone()).collect::<Vec<ClusterNodeInfo>>())))
+        let cluster_nodes_affected = cluster_nodes_affected.into_iter().collect::<Vec<ClusterNodeInfo>>();
+        Ok(Some((network, cluster_nodes_affected)))
     }
 
     pub fn stop_emulation(&mut self, emul_id: &Uuid) -> Result<()> {

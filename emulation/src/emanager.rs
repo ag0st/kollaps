@@ -179,6 +179,7 @@ impl EManager {
                 emulcore.as_mut().init_emulation(dock, reporter_path).await?;
                 // Now we can tell the Kollaps cluster leader that we are ready and store the emulation core.
                 emul_id_to_emulcore.lock().await.insert(emul_id.clone(), emulcore);
+                println!("[EManager] : EmulCore {} is ready. Sending Ready to OManager: {}", emul_id, c_l);
                 TCP::bind(Some(NoHandler)).await?.send_to(OManagerMessage::EmulationReady((emul_id.to_string(), me)), c_l).await?;
                 Ok::<_, Error>(())
             }.await {
