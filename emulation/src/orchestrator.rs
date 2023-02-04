@@ -193,7 +193,7 @@ impl Orchestrator {
                 // Then we will grow the residual graph and add it the correct speeds
                 // growing
                 let node_index = nodes_to_index.get(n).unwrap().clone();
-                self.residual_graph.grow_fn(1, |row, col| {
+                self.residual_graph = self.residual_graph.grow_fn(1, |row, col| {
                     if row == col {
                         u32::MAX
                     } else {
