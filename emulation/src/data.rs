@@ -318,8 +318,8 @@ impl<'a, T: netgraph::Vertex> Debug for Flow<'a, T> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum EManagerMessage {
-    EmulCoreInterchange(String, EmulMessage),
-    ExperimentNew(ClusterNodeInfo, Emulation),
+    EmulCoreInterchange((String, EmulMessage)),
+    ExperimentNew((ClusterNodeInfo, Emulation)),
     ExperimentStop(String),
     ExperimentReady(String),
 }
@@ -327,9 +327,9 @@ pub enum EManagerMessage {
 impl Display for EManagerMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            EManagerMessage::EmulCoreInterchange(id, mess) => write!(f, "EmulInterchange for {}: {}", id, mess),
-            EManagerMessage::ExperimentNew(_, emulation) => write!(f, "EmulationStart of {}", emulation.uuid),
-            EManagerMessage::ExperimentStop(uuid) => write!(f, "EmulationStop of {}", uuid),
+            EManagerMessage::EmulCoreInterchange((id, mess)) => write!(f, "EmulInterchange for {}: {}", id, mess),
+            EManagerMessage::ExperimentNew((cn, emulation)) => write!(f, "ExperimentNew of {} from {}", emulation.uuid, cn),
+            EManagerMessage::ExperimentStop(uuid) => write!(f, "ExperimentStop of {}", uuid),
             EManagerMessage::ExperimentReady(uuid) => write!(f, "Experiment {} is ready to launch", uuid),
         }
     }

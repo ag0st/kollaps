@@ -211,7 +211,7 @@ impl OManager {
         let emul = Emulation::build(uuid, &network, &events, leader);
         // Create the message for the different cluster nodes
         // Send my info leader for them to contact me if there is something bad happening with an emulation
-        let mess = EManagerMessage::ExperimentNew(self.my_info_omanager.clone(), emul.clone());
+        let mess = EManagerMessage::ExperimentNew((self.my_info_omanager.clone(), emul.clone()));
         // Send the topology to all concerned cluster nodes
         for i in 0..nodes.len() {
             // If affected to me, directly send it through the local_sender

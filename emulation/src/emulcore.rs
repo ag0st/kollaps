@@ -411,7 +411,7 @@ impl EmulCore {
         } else {
             // Send to the leader that we are ready and wait for its response
             let mut bind:TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
-            let wrapper = EManagerMessage::EmulCoreInterchange(this.emul_id.to_string(), EmulMessage::EmulStart(EmulBeginTime{time: Instant::now()}));
+            let wrapper = EManagerMessage::EmulCoreInterchange((this.emul_id.to_string(), EmulMessage::EmulStart(EmulBeginTime{time: Instant::now()})));
             bind.send_to(wrapper, this.experiment_leader.clone()).await?;
             // Now wait on time synchro
             if let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
@@ -460,7 +460,7 @@ async fn broadcast_ready(destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid, 
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
         let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
-        let wrapper = EManagerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::EmulStart(emul_begin_time.clone()));
+        let wrapper = EManagerMessage::EmulCoreInterchange((emul_id.to_string(), EmulMessage::EmulStart(emul_begin_time.clone())));
         bind.send_to(wrapper, host.clone()).await?
     }
     Ok(begin_time)
@@ -472,7 +472,7 @@ async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>,
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
         let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
-        let wrapper = EManagerMessage::EmulCoreInterchange(emul_id.to_string(), EmulMessage::FlowUpdate(flow.clone()));
+        let wrapper = EManagerMessage::EmulCoreInterchange((emul_id.to_string(), EmulMessage::FlowUpdate(flow.clone())));
         bind.send_to(wrapper, host.clone()).await?
     }
     Ok(())

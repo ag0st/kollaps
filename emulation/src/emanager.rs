@@ -89,7 +89,8 @@ impl EManager {
         // Now wait on incoming requests
         while let Some(message) = receiver.recv().await {
             match message {
-                MessageWrapper { message: EManagerMessage::ExperimentNew(leader, emul), sender: Some(sender) } => {
+                MessageWrapper { message: EManagerMessage::ExperimentNew((leader, emul)), sender: Some(sender) } => {
+                    println!("[EManager] : Received a new experiment from network");
                     // We can store the cluster leader for next requests. The Emulation Start is the first message that we must receive.
                     if let None = self.cluster_omanager {
                         self.cluster_omanager = Some(leader);
@@ -97,7 +98,8 @@ impl EManager {
                     self.create_emulation(emul, self.dock.clone(), self.cluster_omanager.as_ref().unwrap().clone()).await.unwrap();
                     sender.send(None).unwrap();
                 }
-                MessageWrapper { message: EManagerMessage::ExperimentNew(leader, emul), sender: None } => {
+                MessageWrapper { message: EManagerMessage::ExperimentNew((leader, emul)), sender: None } => {
+                    println!("[EManager] : Received a new experiment from local node");
                     // If we receive this message, we already know the leader, it is me! Mario!
                     if let None = self.cluster_omanager {
                         self.cluster_omanager = Some(leader);
@@ -105,7 +107,7 @@ impl EManager {
                     // coming directly from me because I am the leader
                     self.create_emulation(emul, self.dock.clone(), self.cluster_omanager.as_ref().unwrap().clone()).await.unwrap();
                 }
-                MessageWrapper { message: EManagerMessage::EmulCoreInterchange(id, mess), sender: Some(sender) } => {
+                MessageWrapper { message: EManagerMessage::EmulCoreInterchange((id, mess)), sender: Some(sender) } => {
                     let id = Uuid::parse_str(&*id).unwrap();
                     // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
                     if let Some(mess_sender) = self.emul_id_to_channel.lock().await.get(&id) {
@@ -114,12 +116,14 @@ impl EManager {
                     sender.send(None).unwrap();
                 }
                 MessageWrapper { message: EManagerMessage::ExperimentStop(id), sender: Some(sender) } => {
+                    println!("[EManager] : Received an experiment stop from network");
                     let id = Uuid::parse_str(&*id).unwrap();
                     // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
                     self.emul_id_to_emulcore.lock().await.remove_entry(&id);
                     sender.send(None).unwrap();
                 }
                 MessageWrapper { message: EManagerMessage::ExperimentStop(id), sender: None } => {
+                    println!("[EManager] : Received an experiment stop from local node");
                     let id = Uuid::parse_str(&*id).unwrap();
                     // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
                     self.emul_id_to_emulcore.lock().await.remove_entry(&id);
