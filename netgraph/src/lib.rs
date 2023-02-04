@@ -3,10 +3,14 @@ use std::cmp::{max, min, Ordering};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::mem;
+use std::{fmt, mem};
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{MapAccess, Visitor};
+use serde::ser::SerializeMap;
 
 use matrix::SymMatrix;
 
@@ -171,6 +175,106 @@ pub enum PathStrategy {
     ShortestPath,
 }
 
+#[derive(Debug, Clone)]
+struct Mapper<T>(HashMap<T, usize>);
+
+impl<T: Eq + Hash> Default for Mapper<T> {
+    fn default() -> Self {
+        Mapper(HashMap::new())
+    }
+}
+
+impl<T> Deref for Mapper<T> {
+    type Target = HashMap<T, usize>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Mapper<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> Serialize for Mapper<T>
+    where
+        T: Serialize + Eq + Hash,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.len()))?;
+        for (k, v) in &self.0 {
+            map.serialize_entry(v, k)?;
+        }
+        map.end()
+    }
+}
+
+struct MapperVisitor<T> {
+    marker: PhantomData<fn() -> Mapper<T>>
+}
+
+impl<T> MapperVisitor<T> {
+    fn new() -> Self {
+        MapperVisitor {
+            marker: PhantomData
+        }
+    }
+}
+
+impl<'de, T> Visitor<'de> for MapperVisitor<T>
+    where
+        T: Deserialize<'de> + Eq + Hash,
+{
+    // The type that our Visitor is going to produce.
+    type Value = Mapper<T>;
+
+    // Format a message stating what data this Visitor expects to receive.
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Mapper for network")
+    }
+
+    // Deserialize MyMap from an abstract "map" provided by the
+    // Deserializer. The MapAccess input is a callback provided by
+    // the Deserializer to let us see each entry in the map.
+    fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+    {
+        let mut map = HashMap::with_capacity(access.size_hint().unwrap_or(0));
+
+        // While there are entries remaining in the input, add them
+        // into our map.
+        while let Some((key, value)) = access.next_entry()? {
+            // Adding in reverse
+            if let Some(_) = map.insert(value, key) {
+                eprintln!("Duplicate index in deserialization");
+            }
+        }
+
+        Ok(Mapper(map))
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Mapper<T>
+    where
+        T: Deserialize<'de> + Eq + Hash,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+    {
+        // Instantiate our Visitor and ask the Deserializer to drive
+        // it over the input data, resulting in an instance of MyMap.
+        deserializer.deserialize_map(MapperVisitor::new())
+    }
+}
+
+
 #[derive(Serialize, Deserialize, Debug)]
 /// Network represents a network with its nodes and inter-connection.
 /// This structure offers multiple method and path strategy that helps working with the network.
@@ -178,7 +282,7 @@ pub enum PathStrategy {
 /// to make concurrent requests on a same instance. You need to protect it with a mutex.
 pub struct Network<T: Eq + Hash> {
     links: SymMatrix<Option<Link<T>>>,
-    mapper: HashMap<T, usize>,
+    mapper: Mapper<T>,
     path_strategy: PathStrategy,
     // #[serde(skip, default = "default_cache")]
     // shortest_path_cache: RefCell<HashMap<usize, (Vec<Option<u32>>, Vec<Option<usize>>)>>,
@@ -221,11 +325,11 @@ impl<T: Vertex> Network<T> {
     pub fn new(vertices: &Vec<T>, path_strategy: PathStrategy) -> Network<T> {
         Network {
             links: SymMatrix::new_fn(vertices.len(), |_, _| None),
-            mapper: (0..vertices.len())
+            mapper: Mapper((0..vertices.len())
                 .fold(HashMap::new(), |mut acc, i| {
                     acc.insert(vertices[i].clone(), i);
                     acc
-                }),
+                })),
             path_strategy,
             // shortest_path_cache: RefCell::new(HashMap::new()),
             // widest_path_cache: RefCell::new(HashMap::new()),
