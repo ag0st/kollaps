@@ -100,8 +100,8 @@ impl PerfCtrl {
         let res = match rx.await {
             Ok(bps) => {
                 // transform from bits per second to Mb/sec
-                let mbps = (bps as u64) >> 20;
-                Ok(mbps as usize)
+                let kbps = (bps as u64) >> 10;
+                Ok(kbps as usize)
             }
             Err(e) => Err(Error::wrap("perf", ErrorKind::CommandFailed, "error launching the perf test", e))
         };

@@ -265,10 +265,10 @@ pub fn parse_bandwidth(bandwidth: String) -> Result<f32> {
            // base = base * 1000.0;
         }
         if multiplier == "M" {
-            base = base * 1000.0;
+            base = base * 1024.0;
         }
         if multiplier == "G" {
-            base = base * 1000.0 * 1000.0;
+            base = base * 1024.0 * 1024.0;
         }
         Ok(base)
     } else {
