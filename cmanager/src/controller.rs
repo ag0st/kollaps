@@ -184,7 +184,7 @@ impl Ctrl {
                                 }
                                 Err(e) => {
                                     eprintln!("[CLUSTER ADD]: Error adding myself in the cluster, sending an ABORT. Error: {}", e);
-                                    let mut binding: TCPBinding<Event, NoHandler> = TCP::bind(None).await.unwrap();
+                                    let mut binding: TCPBinding<Event, NoHandler> = TCP::bind(Some(NoHandler)).await.unwrap();
                                     binding.send_to(Event::CJQAbort, info).await.unwrap();
 
                                     println!("[CLUSTER ADD]: Waiting a bit and then retry");
@@ -445,7 +445,7 @@ impl Ctrl {
     async fn add_myself_in_cluster(&mut self, leader_info: ClusterNodeInfo) -> Result<Event> {
         println!("[CLUSTER ADD]: Adding myself in the cluster. The leader is: {}", leader_info);
         // We are going to download the CGraph via TCP this time
-        let mut conn: TCPBinding<Event, NoHandler> = TCP::bind(None).await?;
+        let mut conn: TCPBinding<Event, NoHandler> = TCP::bind(Some(NoHandler)).await?;
         conn.send_to(Event::CGraphGet, leader_info.clone()).await?;
         println!("[CLUSTER ADD]: CGraphGet request sent to the leader");
         let (tx, rx) = oneshot::channel::<WCGraph>();

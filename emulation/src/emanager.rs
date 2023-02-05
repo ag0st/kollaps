@@ -131,7 +131,7 @@ impl EManager {
                     let (tx, rx) = mpsc::channel(5);
                     // save the sender
                     self.emul_id_abort_chan.insert(id.clone(), tx);
-                    self.start_emulation(id, self.dock.clone(), leader, rx).await.unwrap();
+                    let _ = self.start_emulation(id, self.dock.clone(), leader, rx).await;
                     if let Some(sender) = is_sender {
                         let _ = sender.send(None);
                     }
@@ -150,6 +150,7 @@ impl EManager {
                 let mut emulcore = emul_id_to_emulcore.lock().await.remove(&uuid).unwrap();
                 tokio::select! {
                     res = async {
+                        println!("[EManager] Starting synchro for {}", uuid)
                         emulcore.as_mut().synchronize().await?;
                         emulcore.as_mut().flow_loop(dock).await?;
                         Ok::<_, Error>(())
@@ -157,14 +158,14 @@ impl EManager {
                         res?
                     }
                     Some(_) = abort_channel.recv() => {
-                        println!("[EManager] Emulation aborted")
+                        println!("[EManager] Emulation aborted {}", uuid)
                     }
                 }
                 Ok::<_, Error>(())
             }.await {
                 // An error occurred, we need to notify the leader
                 eprintln!("Error occurred when starting the emulation: {}", error);
-                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(Some(NoHandler)).await.unwrap();
                 bind.send_to(OManagerMessage::Abort(uuid.to_string()), cluster_leader).await.unwrap();
             }
         });
@@ -191,7 +192,7 @@ impl EManager {
             }.await {
                 // An error occurred, we need to notify the leader
                 eprintln!("Error occured when instatiating the emulation: {}", error);
-                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
+                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(Some(NoHandler)).await.unwrap();
                 bind.send_to(OManagerMessage::Abort(emul_id.to_string()), cluster_omanager).await.unwrap();
             }
         });

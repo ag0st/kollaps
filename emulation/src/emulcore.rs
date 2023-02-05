@@ -348,7 +348,7 @@ impl EmulCore {
                                 stop_app_if_necessary(node.clone(), dock.clone()).await?;
                                 *status = AppStatus::Crashed;
                                 // Send to the orchestrator that we finished our emulation for this app
-                                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(None).await?;
+                                let mut bind: TCPBinding<OManagerMessage, NoHandler> = TCP::bind(Some(NoHandler)).await?;
                                 bind.send_to(OManagerMessage::CleanStop((this.emul_id.to_string(), this.myself.clone(), node.as_app().index())), this.cluster_leader.clone()).await?;
                             }
                         }
@@ -538,7 +538,7 @@ async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>,
         // Here when sending the information to the others, wrap our message with our uuid,
         // like this, when the controller of those host will receive the message, they will be
         // able to redirect the message to the good emulation core.
-        let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
+        let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(Some(NoHandler)).await?;
         let wrapper = EManagerMessage::EmulCoreInterchange((emul_id.to_string(), EmulMessage::FlowUpdate(flow.clone())));
         bind.send_to(wrapper, host.clone()).await?
     }

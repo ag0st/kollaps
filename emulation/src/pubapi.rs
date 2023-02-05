@@ -80,12 +80,20 @@ impl OManager {
     async fn abort_emulations(&mut self, uuids: Vec<Uuid>) {
         for uuid in uuids {
             let mess = EManagerMessage::ExperimentStop(uuid.to_string());
+
+            // If it does not contain the emulation, it means that it has already been aborted, so,
+            // do nothing for it.
+            if !self.emulations_and_their_nodes.contains_key(&uuid) {
+                continue
+            }
+            // Can unwrap safely because of the check above
             for (node, _) in self.emulations_and_their_nodes.get(&uuid).unwrap() {
                 // Send an abort for this
                 let m = mess.clone();
                 if self.my_info_emanager.eq(node) {
-                    self.local_sender.send(MessageWrapper { message: m, sender: None }).await
-                        .expect(&*format!("[WARNING]: Wanted to abort emulation {} on local machine, error", uuid.to_string()));
+                    if let Err(e) = self.local_sender.send(MessageWrapper { message: m, sender: None }).await {
+                        println!("[WARNING]: Wanted to abort emulation {} on local machine, error", uuid.to_string());
+                    }
                 } else {
                     let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
                     let n = node.clone();
@@ -173,6 +181,7 @@ impl OManager {
                     }
                 }
                 if ready {
+                    println!("[OManager] : Emulation {} is ready, sending start", id);
                     // Send to all that the emulation is ready
                     let mess = EManagerMessage::ExperimentReady(id.to_string());
 
