@@ -1,8 +1,9 @@
 use std::cmp::{min};
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::marker::PhantomPinned;
 use std::net::IpAddr;
-use std::ops::Add;
+use std::ops::{Add, Mul};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,14 +16,16 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::sleep_until;
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize, OManagerMessage};
+use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize, OManagerMessage, AsV4, ToU32IpAddr};
 use dockhelper::DockerHelper;
 use netgraph::Network;
-use nethelper::{Handler, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, Unix, UnixBinding};
+use nethelper::{ALL_ADDR, DefaultHandler, Handler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, Unix, UnixBinding};
 
 use crate::bwsync::{remove_flow, update_flows};
 use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, EManagerMessage, Emulation, Flow, Node};
 use crate::scheduler::schedule;
+
+const SYNC_PORT: u16 = 9090;
 
 #[derive(Clone)]
 struct FlowHandler {
@@ -48,8 +51,7 @@ pub struct EmulCore {
     // way faster searches across the structures
     // There is no problem of cloning an app regarding mutability. An app itself do not allow
     // to be mutable. It doesn't publish its internals and no permissions is given via calls.
-    is_leader: bool,
-    experiment_leader: ClusterNodeInfo,
+    sync_binding: Option<(TCPBinding<EmulMessage, DefaultHandler<EmulMessage>>, Receiver<MessageWrapper<EmulMessage>>)>,
     cluster_leader: ClusterNodeInfo,
     graph: Network<Node>,
     events: Option<Vec<EmulationEvent>>,
@@ -101,10 +103,8 @@ impl EmulCore {
     pub fn new(emul: Emulation, myself: ClusterNodeInfo, emul_id_to_channel: Arc<Mutex<HashMap<Uuid, Sender<EmulMessage>>>>, cluster_leader: ClusterNodeInfo, dock: DockerHelper) -> EmulCore {
         // First thing is to parse the emulation to gather all the information I need:
         let (ip_to_app, other_hosts) = parse_emulation(&emul, &myself);
-        let is_leader = emul.am_i_leader(&myself);
         EmulCore {
-            is_leader,
-            experiment_leader: emul.leader(),
+            sync_binding: None,
             cluster_leader,
             emul_id: emul.uuid(),
             graph: emul.graph,
@@ -207,6 +207,14 @@ impl EmulCore {
         let tc_messages_receiver = receiver_refcell.lock().await.take().unwrap();
         this.flow_receiver = Some(tc_messages_receiver);
         this.flow_sender = Some(tc_messages_sender);
+
+        // Create the binding for the synchronization
+        let (tx, rx) = mpsc::channel(10);
+        let handler: DefaultHandler<EmulMessage> = DefaultHandler::new(tx);
+        let mut binding = TCP::bind_addr((ALL_ADDR, SYNC_PORT), Some(handler)).await?;
+        binding.listen()?;
+        this.sync_binding = Some((binding, rx));
+
         Ok(())
     }
 
@@ -382,43 +390,120 @@ impl EmulCore {
         Ok(())
     }
 
-    pub async fn synchronize(self: Pin<&mut Self>, start_in_future: Duration) -> Result<()> {
+    pub async fn synchronize(self: Pin<&mut Self>) -> Result<()> {
         let this = unsafe { self.get_unchecked_mut() };
-        // If I am the leader, I have to synchronize with other before continuing.
-        // For this, I will wait to receive a message from all the others,
-        // Then I will send them back the response and everybody continue. This is simple synchro
-        // That works only in "good" environment. Todo: Change with something like NTP or Berkley Algorithm
+        // Using a decentralized synchronization. each node send to the other.
+        // We need to create the order. Get the other hosts.
+        let mut all: Vec<&IpAddr> = this.other_hosts.iter().map(|c| &c.ip_addr).collect();
+        all.push(&this.myself.ip_addr);
 
-        if this.is_leader {
-            // wait on other responses
-            let mut number_of_events_remaining = this.other_hosts.len();
-            if number_of_events_remaining > 0 {
-                while let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
-                    match event {
-                        EmulMessage::EmulStart(_) => number_of_events_remaining -= 1,
-                        _ =>{
-                            return Err(Error::new("emulation synchronization", ErrorKind::CommandFailed, "received another event that EmulStart, there is an issue"));
+        // If I am alone, do nothing of this
+        if all.len() == 1 {
+            return Ok(());
+        }
+
+        all.sort();
+        let mut my_position = 0;
+        for ip in &all {
+            if this.myself.ip_addr.eq(*ip) {
+                break;
+            }
+            my_position += 1;
+        }
+
+        // moving to immutable
+        let my_position = my_position;
+        let iam_leader = my_position == 0;
+        let next_host = ClusterNodeInfo { ip_addr: *all[my_position + 1 % all.len()], port: SYNC_PORT };
+        // Take the ownership of the synchronization binding and the receiver, at the end, they will be dropped.
+        let (_binding, mut receiver) = this.sync_binding.take().unwrap();
+
+        println!("[EmulCore {}] : Synchronization, my next host: {}", this.emul_id, next_host);
+
+        // If a connection crash, it will be reported to the EManager that will send an abort
+        let mut next_conn = TCP::bind(Some(NoHandler)).await?;
+        next_conn.connect(next_host).await?;
+
+        if iam_leader {
+            println!("[EmulCore {}] : I am the leader of the emulation, start Synchro", this.emul_id);
+            // I need to send the first element
+            let mut time = Instant::now();
+            let mut begin_time = time.add(Duration::from_secs(5));
+            println!("[EmulCore {}] : Synchro : first proposed time: {:?}", this.emul_id, begin_time);
+            // Open the connexion to the next
+            next_conn.send(EmulMessage::EmulStart(EmulBeginTime { time: begin_time })).await?;
+            // Now, as leader, we need to wait on receiving our time again
+            while let Some(message) = receiver.recv().await {
+                match message {
+                    MessageWrapper { message: EmulMessage::EmulStart(begin), sender: Some(sender) } => {
+                        // Check if it remains enough time to make a full circle
+                        let round_duration = time.elapsed();
+                        let next_round_time = Instant::now().add(round_duration.add(Duration::from_secs(1)));
+                        println!("[EmulCore {}] : Synchro : first round in: {:?}", this.emul_id, round_duration);
+                        if begin.time > next_round_time {
+                            // Enough time
+                            println!("[EmulCore {}] : Synchro : enough time for validation", this.emul_id);
+                            next_conn.send(EmulMessage::EmulStartOk).await?;
+                        } else {
+                            // Send a new proposed time with more margin.
+                            time = Instant::now();
+                            begin_time = time.add(round_duration.mul(2).add(Duration::from_secs(2)));
+                            println!("[EmulCore {}] : Synchro : adaptation of time, new starting time: {:?}", this.emul_id, begin_time);
+                            next_conn.send(EmulMessage::EmulStart(EmulBeginTime{time: begin_time})).await?;
                         }
+                        let _ = sender.send(None);
+                    },
+                    MessageWrapper {message: EmulMessage::EmulStartOk, sender: Some(sender)} => {
+                        // I received an EmulStart. I need to check my last received begin time if it is still valid.
+                        if begin_time > Instant::now() {
+                            // Ok, sleep until this time
+                            println!("[EmulCore {}] : Synchro : Leader finish synchro, OK", this.emul_id);
+                            sleep_until(tokio::time::Instant::from(begin_time)).await;
+                        } else {
+                            // Abort the emulation by crashing
+                            return Err(Error::new("emulation synchronization", ErrorKind::CommandFailed, "Leader of synchronization failed because validation token received after begin time."));
+                        }
+                        let _ = sender.send(None);
+                        // Quit the reading message loop
+                        break;
                     }
-                    if number_of_events_remaining == 0 {
-                        // Everybody is ready to rock, send start
-                        let begin_time = broadcast_ready(&this.other_hosts, this.emul_id.clone(), start_in_future).await?;
-                        sleep_until(tokio::time::Instant::from(begin_time)).await;
-                        break
+                    _ => {
+                        eprintln!("[EmulCore {}] : Leader received bad message, waiting to receive begin time.", this.emul_id);
+                        return Err(Error::new("emulation synchronization", ErrorKind::CommandFailed, "Leader received bad message during sync, waiting on begin time."));
                     }
                 }
             }
         } else {
-            // Send to the leader that we are ready and wait for its response
-            let mut bind:TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
-            let wrapper = EManagerMessage::EmulCoreInterchange((this.emul_id.to_string(), EmulMessage::EmulStart(EmulBeginTime{time: Instant::now()})));
-            bind.send_to(wrapper, this.experiment_leader.clone()).await?;
-            // Now wait on time synchro
-            if let Some(event) = this.flow_receiver.as_mut().unwrap().recv().await {
-                match event {
-                    EmulMessage::EmulStart(begin_time) => sleep_until(tokio::time::Instant::from(begin_time.time)).await,
-                    _ =>{
-                        return Err(Error::new("emulation synchronization", ErrorKind::CommandFailed, "received another event that EmulStart, there is an issue"));
+            // Initialization for the checker to be happy, but will never use because we need to
+            // receive an EmulStartOk start before EmulStartOk
+            let mut begin_time = Instant::now();
+            while let Some(message) = receiver.recv().await {
+                match message {
+                    MessageWrapper { message: EmulMessage::EmulStart(begin), sender: Some(sender) } => {
+                        // Just register it and pass it to the next
+                        begin_time = begin.time;
+                        println!("[EmulCore {}] : Synchro : Received begin time, passing to next: {:?}", this.emul_id, begin_time);
+                        next_conn.send(EmulMessage::EmulStart(EmulBeginTime{time: begin_time})).await?;
+                        let _ = sender.send(None);
+                    },
+                    MessageWrapper {message: EmulMessage::EmulStartOk, sender: Some(sender)} => {
+                        // I received an EmulStartOk. I need to check my last received begin time if it is still valid.
+                        if begin_time > Instant::now() {
+                            // Send it to the next
+                            println!("[EmulCore {}] : Synchro : Confirmation Ok, passing to next", this.emul_id);
+                            next_conn.send(EmulMessage::EmulStartOk).await?;
+                            // Ok, sleep until this time
+                            sleep_until(tokio::time::Instant::from(begin_time)).await;
+                        } else {
+                            // Abort the emulation by crashing
+                            return Err(Error::new("emulation synchronization", ErrorKind::CommandFailed, "Synchronization failed because validation token received after begin time."));
+                        }
+                        let _ = sender.send(None);
+                        break;
+                    }
+                    _ => {
+                        eprintln!("[EmulCore {}] : Leader received bad message, waiting to receive begin time.", this.emul_id);
+                        return Err(Error::new("emulation synchronization", ErrorKind::CommandFailed, "Leader received bad message during sync, waiting on begin time."));
                     }
                 }
             }
@@ -448,8 +533,6 @@ impl EmulCore {
         Ok((active_flows, bw_graph))
     }
 }
-
-
 
 
 async fn broadcast_ready(destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid, future: Duration) -> Result<Instant> {

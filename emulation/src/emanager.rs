@@ -155,7 +155,7 @@ impl EManager {
                 // take ownership of the emulcore
                 let mut emulcore = emul_id_to_emulcore.lock().await.remove(&uuid).unwrap();
                 // Now, the emulcores must synchronize between themself
-                emulcore.as_mut().synchronize(Duration::from_secs(5)).await?;
+                emulcore.as_mut().synchronize().await?;
                 emulcore.as_mut().flow_loop(dock).await?;
 
                 Ok::<_, Error>(())

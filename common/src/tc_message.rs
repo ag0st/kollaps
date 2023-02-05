@@ -75,6 +75,7 @@ pub enum EmulMessage {
     TCTeardown,
     SocketReady,
     EmulStart(EmulBeginTime),
+    EmulStartOk,
     Event(EmulationEvent),
 }
 
@@ -136,6 +137,7 @@ impl EmulMessage {
                 let time = deserialize::<EmulBeginTime>(data)?;
                 Ok(EmulMessage::EmulStart(time))
             }
+            0x000B => Ok(EmulMessage::EmulStartOk),
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -151,6 +153,7 @@ impl EmulMessage {
             EmulMessage::SocketReady => 0x0008,
             EmulMessage::Event(_) => 0x0009,
             EmulMessage::EmulStart(_) => 0x000A,
+            EmulMessage::EmulStartOk => 0x000B,
         }
     }
 }
@@ -192,7 +195,8 @@ impl Display for EmulMessage {
             EmulMessage::TCReconnect => write!(f, "TCReconnect"),
             EmulMessage::TCTeardown => write!(f, "TCTeardown"),
             EmulMessage::SocketReady => write!(f, "SocketReady"),
-            EmulMessage::EmulStart(_) => write!(f, "EmulationReady"),
+            EmulMessage::EmulStart(_) => write!(f, "EmulationStart"),
+            EmulMessage::EmulStartOk => write!(f, "EmulationStartOk"),
             EmulMessage::Event(_) => write!(f, "EmulationEvent"),
         }
     }
