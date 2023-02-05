@@ -92,13 +92,13 @@ impl<T: Sendable, H: Handler<T>> UnixBinding<T, H> {
         let content_length = stream.read_u16().await?;
         // create a buffer to store the whole remaining of the message
         let mut buf = vec![0u8; content_length as usize];
-        stream.read_exact(&mut buf).await.unwrap();
+        stream.read_exact(&mut buf).await?;
         Ok(BytesMut::from(buf.as_slice()))
     }
 
     async fn write_to_stream(stream: &mut UnixStream, x: T) -> Result<()> {
         let data = x.serialize_to_bytes();
-        stream.write_u16(data.len() as u16).await.unwrap();
+        stream.write_u16(data.len() as u16).await?;
         stream.write_all(data.as_ref()).await.or_else(|e| {
             Err(Self::err_producer().wrap(ErrorKind::BadWrite, "Cannot write on the Unix Socket connection", e))
         })
@@ -151,7 +151,6 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UnixBinding<T,
                         loop {
                             let handler = handler.clone();
                             let (mut stream, _) = listener.accept().await?;
-                            // println!("new TCP connection incoming with peer: {}", stream.peer_addr().unwrap());
                             let (sender, receiver) = oneshot::channel();
                             chans.push(sender);
                             tokio::spawn(async move {
@@ -159,14 +158,14 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UnixBinding<T,
                                     _ = async {
                                         loop {
                                             if let Err(_) = Self::read_and_handle_from_stream(&mut stream, handler.clone()).await {
-                                                println!("connection closed by the peer");
+                                                println!("[NetHelper]: Unix Pipe closed by peer");
                                                 break
                                             }
                                         }
                                         Ok::<_, Error>(())
                                     } => {}
                                     val = receiver => {
-                                        println!("Stop reading on UnixStream: {:?}", val);
+                                        println!("[NetHelper]: Stop reading on UnixStream: {:?}", val);
                                     }
                                 }
                             });
@@ -177,7 +176,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UnixBinding<T,
                     Ok::<_, Error>(())
                     } => {}
                     val = rx => {
-                        println!("Stop listening for new Unix connections: {:?}", val);
+                        println!("[NetHelper]: Stop listening for new Unix connections: {:?}", val);
                         for a in chans {
                             if let Err(_) = a.send("Stop listening on Unix Stream") {
                                 println!("Connection already closed");
@@ -191,7 +190,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UnixBinding<T,
 
     async fn receive(&mut self) -> Result<()> {
         let handler = self.handler.as_ref()
-            .expect("No handler set, please add a handler to receive")
+            .ok_or(Self::err_producer().create(ErrorKind::BadMode, "Binding already in a mode"))?
             .clone();
         let stream = self.get_stream()?;
         Self::read_and_handle_from_stream(stream, handler.clone()).await

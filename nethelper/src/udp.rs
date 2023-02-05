@@ -70,8 +70,7 @@ impl<T: Sendable, H: Handler<T> + 'static> UDPBinding<T, H> {
     async fn receive_and_handle_from(socket: Arc<UdpSocket>, mut handler: impl Handler<T>, ignore: HashSet<SocketAddr>) -> Result<()> {
         let mut buf = vec![0u8; 2];
         // todo: do not work on Windows, need to set 65536 buffer size to not loose packet
-        let (_, addr) = socket.peek_from(&mut buf).await
-            .expect("cannot retrieve the size of the payload for UDP");
+        let (_, addr) = socket.peek_from(&mut buf).await?;
 
         // take the size
         let size_to_read = get_size(buf) + CONTENT_LENGTH_LENGTH;
@@ -89,8 +88,7 @@ impl<T: Sendable, H: Handler<T> + 'static> UDPBinding<T, H> {
         // Ignore the packet if it comes from one in the list.
         if !ignore.contains(&addr) {
             if let Some(x) = handler.handle(bytes_mut).await {
-                Self::send_to(socket, x, source).await
-                    .expect("Cannot send back udp Info");
+                Self::send_to(socket, x, source).await?
             }
         }
 
@@ -107,7 +105,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UDPBinding<T, 
 
     fn listen(&mut self) -> Result<()> {
         let handler = self.handler.as_ref()
-            .expect("No handler set, please add a handler to begin to listen")
+            .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[UDPBinding] Cannot begin to listen if there is no Handler."))?
             .clone();
         let socket = self.socket.clone();
         let handler = handler.clone();
@@ -126,7 +124,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for UDPBinding<T, 
 
     async fn receive(&mut self) -> Result<()> {
         let handler = self.handler.as_ref()
-            .expect("No handler set, please add a handler to receive")
+            .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[UDPBinding] Cannot begin to listen if there is no Handler."))?
             .clone();
         Self::receive_and_handle_from(self.socket.clone(), handler.clone(), self.ignore_list.clone()).await
     }

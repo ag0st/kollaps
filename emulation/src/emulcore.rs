@@ -248,7 +248,7 @@ impl EmulCore {
                         println!("Flow updated between {} and {} : {:?}", src, dest, flow_conf.throughput);
                         // Get the defined properties (by the topology) of the path between the source of the flow and the destination.
                         let (max_bandwidth, drop, latency_jitter) = this.graph.properties_between(src, dest)
-                            .expect(&*format!("New flow between applications that do not have a connection!?: {} -> {}", src, dest));
+                            .ok_or(Error::new("emulcore", ErrorKind::InvalidData, &*format!("New flow between applications that do not have a connection!?: {} -> {}", src, dest)))?;
 
                         // We can calculate the target bandwidth to be the min between allowed and the asked bandwidth
                         // If the flowConf.throughput == None, it means that the flow ended and so, the target bandwidth = 0

@@ -7,7 +7,9 @@ pub fn schedule(event_sender: mpsc::Sender<EmulMessage>, events: Vec<EmulationEv
         let sender = event_sender.clone();
         tokio::spawn(async move {
             sleep(event.time);
-            sender.send(EmulMessage::Event(event)).await.unwrap()
+            // Do not care if we can or cannot push the event. The case we cannot only appears
+            // when the emulation is done, so no worry.
+            let _ = sender.send(EmulMessage::Event(event)).await;
         });
     }
 }

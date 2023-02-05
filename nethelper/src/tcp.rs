@@ -54,7 +54,8 @@ impl<T: Sendable, H: Handler<T>> TCPBinding<T, H> {
     pub async fn connect(&mut self, addr: impl ToSocketAddr) -> Result<()> {
         let stream = match self.mode {
             TCPBindingMode::None => {
-                self.socket.take().expect("no socket found in TCP Binding... weird")
+                self.socket.take()
+                    .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[TCPBinding] No socket found in TCP Binding... weird"))?
                     .connect(addr.to_socket_addr()?).await?
             }
             _ => { return Err(Self::err_producer().create(ErrorKind::BadMode, "Binding already in a mode")); }
@@ -137,7 +138,7 @@ impl<T: Sendable, H: Handler<T>> TCPBinding<T, H> {
 impl<T: Sendable, H: Handler<T>> Drop for TCPBinding<T, H> {
     fn drop(&mut self) {
         if let TCPBindingMode::LISTENING(_) = self.mode {
-            self.close_channel.take().unwrap().send("stopping accept loop").unwrap()
+            self.close_channel.take().unwrap().send("[TCPListener]: Closing Socket").unwrap()
         }
         // nothing to do for the other modes
     }
@@ -151,12 +152,14 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, 
 
     fn listen(&mut self) -> Result<()> {
         let handler = self.handler.as_ref()
-            .expect("cannot start listening if there is no handler")
+            .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[TCPBinding] : Cannot start listening without handler"))?
             .clone();
 
         let listener = match self.mode {
             TCPBindingMode::None => {
-                self.socket.take().expect("no socket found in TCP Binding... weird").listen(1024)?
+                self.socket.take()
+                    .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[TCPBinding] No socket found in TCP Binding... weird"))?
+                    .listen(1024)?
             }
             _ => { return Err(Self::err_producer().create(ErrorKind::BadMode, "Binding already in a mode")); }
         };
@@ -174,7 +177,6 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, 
                         loop {
                             let handler = handler.clone();
                             let (mut stream, _) = listener.accept().await?;
-                            // println!("new TCP connection incoming with peer: {}", stream.peer_addr().unwrap());
                             let (sender, receiver) = oneshot::channel();
                             chans.push(sender);
                             tokio::spawn(async move {
@@ -182,14 +184,14 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, 
                                     _ = async {
                                         loop {
                                             if let Err(_) = Self::read_and_handle_from_stream(&mut stream, handler.clone()).await {
-                                                println!("connection closed by the peer: {}", stream.peer_addr().unwrap());
+                                                println!("[TCPListener]: Connection closed by the peer: {}", stream.peer_addr()?);
                                                 break
                                             }
                                         }
                                         Ok::<_, Error>(())
                                     } => {}
                                     val = receiver => {
-                                        println!("Stop reading on TCPStream: {:?}", val);
+                                        println!("[TCPListener]: Stop reading on TCPStream: {:?}", val);
                                     }
                                 }
                             });
@@ -200,7 +202,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, 
                     Ok::<_, Error>(())
                     } => {}
                     val = rx => {
-                        println!("Stop listening for new TCP connections: {:?}", val);
+                        println!("[TCPListener] Stop listening for new TCP connections: {:?}", val);
                         for a in chans {
                             a.send("Stop listening on TCP Stream").unwrap();
                         }
@@ -212,7 +214,7 @@ impl<T: Sendable, H: Handler<T> + 'static> ProtoBinding<T, H> for TCPBinding<T, 
 
     async fn receive(&mut self) -> Result<()> {
         let handler = self.handler.as_ref()
-            .expect("No handler set, please add a handler to receive")
+            .ok_or(Self::err_producer().create(ErrorKind::BadMode, "[TCPBinding]: Not in good mode"))?
             .clone();
         let stream = self.get_stream()?;
         Self::read_and_handle_from_stream(stream, handler.clone()).await

@@ -32,7 +32,7 @@ impl PerfCtrl {
             .arg(format!("-p {}", self.iperf3_info.port)) // on port given by the server
             .arg("-s") // Server mode
             .arg("-1") // one time test
-            .spawn().expect("cannot launch iperf3 server");
+            .spawn()?;
 
         Ok(())
     }
@@ -73,26 +73,34 @@ impl PerfCtrl {
                 }
             };
             tokio::spawn(async move {
-                let command = Command::new("iperf3")
-                    .arg(format!("-p {}", other.port)) // on port given by the server
-                    .arg("-J") // Json format output
-                    .arg("-c")// client mode
-                    .arg(target.ip().to_string())// target
-                    .arg(format!("-t {}", test_duration))
-                    .output();
-                let output = command.await.expect("Cannot run iperf3 command");
-                let output = String::from_utf8_lossy(&output.stdout).to_string();
-                let output = output.replace("\t", "").replace("\n", "");
-                let result: Value = serde_json::from_str(&*output).unwrap();
-                let sender_bps = result["end"]["sum_sent"]["bits_per_second"]
-                    .as_f64()
-                    .expect("cannot take the bits/sec result");
-                let receiver_bps = result["end"]["sum_received"]["bits_per_second"]
-                    .as_f64()
-                    .expect("cannot take the bits/sec result");
+                match async {
+                    let command = Command::new("iperf3")
+                        .arg(format!("-p {}", other.port)) // on port given by the server
+                        .arg("-J") // Json format output
+                        .arg("-c")// client mode
+                        .arg(target.ip().to_string())// target
+                        .arg(format!("-t {}", test_duration))
+                        .output();
+                    let output = command.await?;
+                    let output = String::from_utf8_lossy(&output.stdout).to_string();
+                    let output = output.replace("\t", "").replace("\n", "");
+                    let result: Value = serde_json::from_str(&*output)?;
+                    let sender_bps = result["end"]["sum_sent"]["bits_per_second"]
+                        .as_f64()
+                        .ok_or(Error::new("perf", ErrorKind::InvalidData, "cannot take the bits/sec result"))?;
+                    let receiver_bps = result["end"]["sum_received"]["bits_per_second"]
+                        .as_f64()
+                        .ok_or(Error::new("perf", ErrorKind::InvalidData, "cannot take the bits/sec result"))?;
 
-                let bandwidth = f64::min(sender_bps, receiver_bps);
-                tx.send(bandwidth).unwrap();
+                    let bandwidth = f64::min(sender_bps, receiver_bps);
+                    Ok::<f64, Error>(bandwidth)
+                }.await {
+                    Ok(bandwidth) => tx.send(bandwidth).unwrap(),
+                    Err(e) => {
+                        eprintln!("[PERF]: Error being the client: {}", e);
+                        drop(tx);
+                    }
+                }
             });
             None
         })).await?;

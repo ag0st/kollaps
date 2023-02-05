@@ -163,7 +163,8 @@ impl<I: Clone + Eq> CGraph<I> {
         let node = self.nodes.iter()
             .filter(predicate)
             .take(1)
-            .last().expect("cannot find the node you want to remove, predicates returned nothing")
+            .last()
+            .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[CGraph] Cannot remove the node you are searching for, predicates didn't give anything."))?
             .clone(); // clone to remove the immutable borrow of the set
         if !self.nodes.remove(&node) {
             let err = Self::err_producer().create(
@@ -227,7 +228,7 @@ impl<I: Clone + Eq> CGraph<I> {
         self.c_graph[(from.index, to.index)].set_speed(speed);
 
         // finally, update the speeds, use transitions
-        self.update_speeds();
+        self.update_speeds()?;
 
         Ok(useful)
     }
@@ -250,7 +251,7 @@ impl<I: Clone + Eq> CGraph<I> {
     }
 
     // returns from and to
-    pub fn find_missing_from_me(&mut self, me: Node<I>, sufficient_speed: usize) -> Option<Node<I>> {
+    pub fn find_missing_from_me(&mut self, me: Node<I>, sufficient_speed: usize) -> Result<Option<Node<I>>> {
         let mut missing = false;
         // simplification of use for the next algorithm.
         let from = &me;
@@ -321,10 +322,10 @@ impl<I: Clone + Eq> CGraph<I> {
             let node = missing_links
                 .iter()
                 .max_by(|a, b| a.speed.cmp(&b.speed))
-                .expect("cannot find fastest node");
-            Some(node.clone())
+                .ok_or(Self::err_producer().create(ErrorKind::NoResource, "[CGraph] Cannot find the fastest node"))?;
+            Ok(Some(node.clone()))
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -340,7 +341,7 @@ impl<I: Clone + Eq> CGraph<I> {
     /// updates the speeds regarding possible transitions, it allows to
     /// extrapolate speeds with what we already know.
     /// It is inspired by the Floyd-Warshall algorithm
-    fn update_speeds(&mut self) {
+    fn update_speeds(&mut self) -> Result<()>{
         for i in 0..self.c_graph.size() {
             for j in 0..self.c_graph.size() {
                 for k in 0..self.c_graph.size() {
@@ -355,7 +356,8 @@ impl<I: Clone + Eq> CGraph<I> {
                         let min_speed = self.nodes.iter()
                             .filter(|a| a.index == i || a.index == j)
                             .map(|node| node.speed())
-                            .min().expect("cannot find the two nodes in the hashset");
+                            .min()
+                            .ok_or(Self::err_producer().create(ErrorKind::NoResource, "Cannot the two nodes while updating speeds"))?;
                         if min_speed == speed_by_transition {
                             self.set_not_limited(i, j)
                         }
@@ -363,6 +365,7 @@ impl<I: Clone + Eq> CGraph<I> {
                 }
             }
         }
+        Ok(())
     }
 //     /// gives the directly connected nodes of the node "of".
 //     fn get_neighbors_lvl1(&self, of_in: usize) -> Vec<usize> {
