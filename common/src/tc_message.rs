@@ -112,7 +112,7 @@ impl EmulMessage {
                 let fl_conf = deserialize::<FlowConf>(data)?;
                 Ok(EmulMessage::FlowUpdate(fl_conf))
             }
-
+            0x0002 => Ok(EmulMessage::EmulStartOk),
             0x0003 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
                 let tc_conf = deserialize::<TCConf>(data)?;
@@ -137,7 +137,6 @@ impl EmulMessage {
                 let time = deserialize::<EmulBeginTime>(data)?;
                 Ok(EmulMessage::EmulStart(time))
             }
-            0x000B => Ok(EmulMessage::EmulStartOk),
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -145,6 +144,7 @@ impl EmulMessage {
     pub fn event_2_opcode(com: &EmulMessage) -> u16 {
         match com {
             EmulMessage::FlowUpdate(_) => 0x0001,
+            EmulMessage::EmulStartOk => 0x0002,
             EmulMessage::TCInit(_) => 0x0003,
             EmulMessage::TCUpdate(_) => 0x0004,
             EmulMessage::TCDisconnect => 0x0005,
@@ -153,7 +153,6 @@ impl EmulMessage {
             EmulMessage::SocketReady => 0x0008,
             EmulMessage::Event(_) => 0x0009,
             EmulMessage::EmulStart(_) => 0x000A,
-            EmulMessage::EmulStartOk => 0x000B,
         }
     }
 }

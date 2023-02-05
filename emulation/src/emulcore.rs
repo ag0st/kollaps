@@ -414,7 +414,7 @@ impl EmulCore {
         // moving to immutable
         let my_position = my_position;
         let iam_leader = my_position == 0;
-        let next_host = ClusterNodeInfo { ip_addr: *all[my_position + 1 % all.len()], port: SYNC_PORT };
+        let next_host = ClusterNodeInfo { ip_addr: *all[(my_position + 1) % all.len()], port: SYNC_PORT };
         // Take the ownership of the synchronization binding and the receiver, at the end, they will be dropped.
         let (_binding, mut receiver) = this.sync_binding.take().unwrap();
 
