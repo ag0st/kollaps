@@ -150,7 +150,7 @@ impl EManager {
                 let mut emulcore = emul_id_to_emulcore.lock().await.remove(&uuid).unwrap();
                 tokio::select! {
                     res = async {
-                        println!("[EManager] Starting synchro for {}", uuid)
+                        println!("[EManager] Starting synchro for {}", uuid);
                         emulcore.as_mut().synchronize().await?;
                         emulcore.as_mut().flow_loop(dock).await?;
                         Ok::<_, Error>(())
