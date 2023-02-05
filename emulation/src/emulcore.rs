@@ -1,6 +1,5 @@
-use std::cmp::{min};
+use std::cmp::min;
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 use std::marker::PhantomPinned;
 use std::net::IpAddr;
 use std::ops::{Add, Mul};
@@ -16,13 +15,13 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::sleep_until;
 use uuid::Uuid;
 
-use common::{ClusterNodeInfo, EmulationEvent, EmulBeginTime, EmulMessage, Error, ErrorKind, EventAction, FlowConf, Result, TCConf, ToBytesSerialize, OManagerMessage, AsV4, ToU32IpAddr};
+use common::{ClusterNodeInfo, EmulationEvent, EmulMessage, Error, ErrorKind, EventAction, FlowConf, OManagerMessage, Result, TCConf, ToBytesSerialize};
 use dockhelper::DockerHelper;
 use netgraph::Network;
 use nethelper::{ALL_ADDR, DefaultHandler, Handler, MessageWrapper, NoHandler, ProtoBinding, Protocol, TCP, TCPBinding, Unix, UnixBinding};
 
 use crate::bwsync::{remove_flow, update_flows};
-use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, EManagerMessage, Emulation, Flow, Node};
+use crate::data::{Application, ApplicationKind, AppStatus, ContainerConfig, ECSynchroMessage, EManagerMessage, Emulation, EmulBeginTime, Flow, Node};
 use crate::scheduler::schedule;
 
 const SYNC_PORT: u16 = 9090;
@@ -51,7 +50,7 @@ pub struct EmulCore {
     // way faster searches across the structures
     // There is no problem of cloning an app regarding mutability. An app itself do not allow
     // to be mutable. It doesn't publish its internals and no permissions is given via calls.
-    sync_binding: Option<(TCPBinding<EmulMessage, DefaultHandler<EmulMessage>>, Receiver<MessageWrapper<EmulMessage>>)>,
+    sync_binding: Option<(TCPBinding<ECSynchroMessage, DefaultHandler<ECSynchroMessage>>, Receiver<MessageWrapper<ECSynchroMessage>>)>,
     cluster_leader: ClusterNodeInfo,
     graph: Network<Node>,
     events: Option<Vec<EmulationEvent>>,
@@ -210,7 +209,7 @@ impl EmulCore {
 
         // Create the binding for the synchronization
         let (tx, rx) = mpsc::channel(10);
-        let handler: DefaultHandler<EmulMessage> = DefaultHandler::new(tx);
+        let handler: DefaultHandler<ECSynchroMessage> = DefaultHandler::new(tx);
         let mut binding = TCP::bind_addr((ALL_ADDR, SYNC_PORT), Some(handler)).await?;
         binding.listen()?;
         this.sync_binding = Some((binding, rx));
@@ -431,11 +430,11 @@ impl EmulCore {
             let mut begin_time = time.add(Duration::from_secs(5));
             println!("[EmulCore {}] : Synchro : first proposed time: {:?}", this.emul_id, begin_time);
             // Open the connexion to the next
-            next_conn.send(EmulMessage::EmulStart(EmulBeginTime { time: begin_time })).await?;
+            next_conn.send(ECSynchroMessage::EmulStart(EmulBeginTime { time: begin_time })).await?;
             // Now, as leader, we need to wait on receiving our time again
             while let Some(message) = receiver.recv().await {
                 match message {
-                    MessageWrapper { message: EmulMessage::EmulStart(begin), sender: Some(sender) } => {
+                    MessageWrapper { message: ECSynchroMessage::EmulStart(begin), sender: Some(sender) } => {
                         // Check if it remains enough time to make a full circle
                         let round_duration = time.elapsed();
                         let next_round_time = Instant::now().add(round_duration.add(Duration::from_secs(1)));
@@ -443,17 +442,17 @@ impl EmulCore {
                         if begin.time > next_round_time {
                             // Enough time
                             println!("[EmulCore {}] : Synchro : enough time for validation", this.emul_id);
-                            next_conn.send(EmulMessage::EmulStartOk).await?;
+                            next_conn.send(ECSynchroMessage::EmulStartOk).await?;
                         } else {
                             // Send a new proposed time with more margin.
                             time = Instant::now();
                             begin_time = time.add(round_duration.mul(2).add(Duration::from_secs(2)));
                             println!("[EmulCore {}] : Synchro : adaptation of time, new starting time: {:?}", this.emul_id, begin_time);
-                            next_conn.send(EmulMessage::EmulStart(EmulBeginTime{time: begin_time})).await?;
+                            next_conn.send(ECSynchroMessage::EmulStart(EmulBeginTime { time: begin_time })).await?;
                         }
                         let _ = sender.send(None);
-                    },
-                    MessageWrapper {message: EmulMessage::EmulStartOk, sender: Some(sender)} => {
+                    }
+                    MessageWrapper { message: ECSynchroMessage::EmulStartOk, sender: Some(sender) } => {
                         // I received an EmulStart. I need to check my last received begin time if it is still valid.
                         if begin_time > Instant::now() {
                             // Ok, sleep until this time
@@ -479,19 +478,19 @@ impl EmulCore {
             let mut begin_time = Instant::now();
             while let Some(message) = receiver.recv().await {
                 match message {
-                    MessageWrapper { message: EmulMessage::EmulStart(begin), sender: Some(sender) } => {
+                    MessageWrapper { message: ECSynchroMessage::EmulStart(begin), sender: Some(sender) } => {
                         // Just register it and pass it to the next
                         begin_time = begin.time;
                         println!("[EmulCore {}] : Synchro : Received begin time, passing to next: {:?}", this.emul_id, begin_time);
-                        next_conn.send(EmulMessage::EmulStart(EmulBeginTime{time: begin_time})).await?;
+                        next_conn.send(ECSynchroMessage::EmulStart(EmulBeginTime { time: begin_time })).await?;
                         let _ = sender.send(None);
-                    },
-                    MessageWrapper {message: EmulMessage::EmulStartOk, sender: Some(sender)} => {
+                    }
+                    MessageWrapper { message: ECSynchroMessage::EmulStartOk, sender: Some(sender) } => {
                         // I received an EmulStartOk. I need to check my last received begin time if it is still valid.
                         if begin_time > Instant::now() {
                             // Send it to the next
                             println!("[EmulCore {}] : Synchro : Confirmation Ok, passing to next", this.emul_id);
-                            next_conn.send(EmulMessage::EmulStartOk).await?;
+                            next_conn.send(ECSynchroMessage::EmulStartOk).await?;
                             // Ok, sleep until this time
                             sleep_until(tokio::time::Instant::from(begin_time)).await;
                         } else {
@@ -532,21 +531,6 @@ impl EmulCore {
 
         Ok((active_flows, bw_graph))
     }
-}
-
-
-async fn broadcast_ready(destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid, future: Duration) -> Result<Instant> {
-    let begin_time = Instant::now().add(future);
-    let emul_begin_time = EmulBeginTime { time: begin_time };
-    for host in destination {
-        // Here when sending the information to the others, wrap our message with our uuid,
-        // like this, when the controller of those host will receive the message, they will be
-        // able to redirect the message to the good emulation core.
-        let mut bind: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await?;
-        let wrapper = EManagerMessage::EmulCoreInterchange((emul_id.to_string(), EmulMessage::EmulStart(emul_begin_time.clone())));
-        bind.send_to(wrapper, host.clone()).await?
-    }
-    Ok(begin_time)
 }
 
 async fn broadcast_flow(flow: &FlowConf, destination: &HashSet<ClusterNodeInfo>, emul_id: Uuid) -> Result<()> {

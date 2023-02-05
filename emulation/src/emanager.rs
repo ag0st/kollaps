@@ -3,7 +3,6 @@ use std::net::IpAddr;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::{mpsc, Mutex};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -23,6 +22,7 @@ pub struct EManager {
     myself: ClusterNodeInfo,
     /// Every emulations will add themself and retire themself from this.
     emul_id_to_channel: Arc<Mutex<HashMap<Uuid, Sender<EmulMessage>>>>,
+    emul_id_abort_chan: HashMap<Uuid, Sender<bool>>,
     emul_id_to_emulcore: Arc<Mutex<HashMap<Uuid, Pin<Box<EmulCore>>>>>,
     dock: DockerHelper,
     cluster_omanager: Option<ClusterNodeInfo>,
@@ -44,6 +44,7 @@ impl EManager {
             myself,
             emul_id_to_channel: Arc::new(Default::default()),
             emul_id_to_emulcore: Arc::new(Default::default()),
+            emul_id_abort_chan: HashMap::new(),
             dock,
             cluster_omanager: None,
         })
@@ -89,16 +90,7 @@ impl EManager {
         // Now wait on incoming requests
         while let Some(message) = receiver.recv().await {
             match message {
-                MessageWrapper { message: EManagerMessage::ExperimentNew((leader, emul)), sender: Some(sender) } => {
-                    println!("[EManager] : Received a new experiment from network");
-                    // We can store the cluster leader for next requests. The Emulation Start is the first message that we must receive.
-                    if let None = self.cluster_omanager {
-                        self.cluster_omanager = Some(leader);
-                    }
-                    self.create_emulation(emul, self.dock.clone(), self.cluster_omanager.as_ref().unwrap().clone()).await.unwrap();
-                    sender.send(None).unwrap();
-                }
-                MessageWrapper { message: EManagerMessage::ExperimentNew((leader, emul)), sender: None } => {
+                MessageWrapper { message: EManagerMessage::ExperimentNew((leader, emul)), sender: is_sender } => {
                     println!("[EManager] : Received a new experiment from local node");
                     // If we receive this message, we already know the leader, it is me! Mario!
                     if let None = self.cluster_omanager {
@@ -106,6 +98,9 @@ impl EManager {
                     }
                     // coming directly from me because I am the leader
                     self.create_emulation(emul, self.dock.clone(), self.cluster_omanager.as_ref().unwrap().clone()).await.unwrap();
+                    if let Some(sender) = is_sender {
+                        let _ = sender.send(None);
+                    }
                 }
                 MessageWrapper { message: EManagerMessage::EmulCoreInterchange((id, mess)), sender: Some(sender) } => {
                     let id = Uuid::parse_str(&*id).unwrap();
@@ -115,32 +110,31 @@ impl EManager {
                     }
                     sender.send(None).unwrap();
                 }
-                MessageWrapper { message: EManagerMessage::ExperimentStop(id), sender: Some(sender) } => {
-                    println!("[EManager] : Received an experiment stop from network");
+
+                MessageWrapper { message: EManagerMessage::ExperimentStop(id), sender: is_sender } => {
                     let id = Uuid::parse_str(&*id).unwrap();
                     // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
-                    self.emul_id_to_emulcore.lock().await.remove_entry(&id);
-                    sender.send(None).unwrap();
+                    if let Some(abort) = self.emul_id_abort_chan.get(&id) {
+                        // If we succeed, it means that it has been stopped, else, it is already stopped / crashed
+                        let _ = abort.send(true).await;
+                    }
+                    self.emul_id_abort_chan.remove_entry(&id);
+                    if let Some(sender) = is_sender {
+                        let _ = sender.send(None);
+                    }
                 }
-                MessageWrapper { message: EManagerMessage::ExperimentStop(id), sender: None } => {
-                    println!("[EManager] : Received an experiment stop from local node");
-                    let id = Uuid::parse_str(&*id).unwrap();
-                    // It is possible that our emulcore for this experiment is already finished. So it may not be in the emul_id_to_channel anymore
-                    self.emul_id_to_emulcore.lock().await.remove_entry(&id);
-                }
-                MessageWrapper { message: EManagerMessage::ExperimentReady(id), sender: Some(sender) } => {
-                    let id = Uuid::parse_str(&*id).unwrap();
-                    // We can safely get the registered cluster leader from our attribute, this kind of message always comes after we receive a
-                    // EmulationStart where we store the leader.
-                    let leader = self.cluster_omanager.as_ref().unwrap().clone();
-                    self.start_emulation(id, self.dock.clone(), leader).await.unwrap();
-                    sender.send(None).unwrap();
-                }
-                MessageWrapper { message: EManagerMessage::ExperimentReady(id), sender: None } => {
+                MessageWrapper { message: EManagerMessage::ExperimentReady(id), sender: is_sender } => {
                     let id = Uuid::parse_str(&*id).unwrap();
                     // If we receive this message via direct send over our receive channel, we are the leader
                     let leader = self.cluster_omanager.as_ref().unwrap().clone();
-                    self.start_emulation(id, self.dock.clone(), leader).await.unwrap();
+                    // Create a channel to abort the emulation
+                    let (tx, rx) = mpsc::channel(5);
+                    // save the sender
+                    self.emul_id_abort_chan.insert(id.clone(), tx);
+                    self.start_emulation(id, self.dock.clone(), leader, rx).await.unwrap();
+                    if let Some(sender) = is_sender {
+                        let _ = sender.send(None);
+                    }
                 }
                 _ => {}
             }
@@ -148,16 +142,24 @@ impl EManager {
         Ok(())
     }
 
-    async fn start_emulation(&self, uuid: Uuid, dock: DockerHelper, cluster_leader: ClusterNodeInfo) -> Result<()> {
+    async fn start_emulation(&self, uuid: Uuid, dock: DockerHelper, cluster_leader: ClusterNodeInfo, mut abort_channel: Receiver<bool>) -> Result<()> {
         let emul_id_to_emulcore = self.emul_id_to_emulcore.clone();
         tokio::spawn(async move {
             if let Err(error) = async {
                 // take ownership of the emulcore
                 let mut emulcore = emul_id_to_emulcore.lock().await.remove(&uuid).unwrap();
-                // Now, the emulcores must synchronize between themself
-                emulcore.as_mut().synchronize().await?;
-                emulcore.as_mut().flow_loop(dock).await?;
-
+                tokio::select! {
+                    res = async {
+                        emulcore.as_mut().synchronize().await?;
+                        emulcore.as_mut().flow_loop(dock).await?;
+                        Ok::<_, Error>(())
+                    } => {
+                        res?
+                    }
+                    Some(_) = abort_channel.recv() => {
+                        println!("[EManager] Emulation aborted")
+                    }
+                }
                 Ok::<_, Error>(())
             }.await {
                 // An error occurred, we need to notify the leader

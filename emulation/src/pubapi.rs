@@ -205,10 +205,8 @@ impl OManager {
     // Cannot ask for references because it is in an await.
     async fn send_new_emulation(&self, uuid: Uuid, network: Network<Node>, nodes: Vec<ClusterNodeInfo>, events: Vec<EmulationEvent>) -> Result<()> {
         // We found a topology! let's create a new one
-        // Choose a leader randomly (first we find)
-        let leader = nodes[0].clone();
         println!("[OManager] : Sending new Emulation to these nodes: {:?}", nodes);
-        let emul = Emulation::build(uuid, &network, &events, leader);
+        let emul = Emulation::build(uuid, &network, &events);
         // Create the message for the different cluster nodes
         // Send my info leader for them to contact me if there is something bad happening with an emulation
         let mess = EManagerMessage::ExperimentNew((self.my_info_omanager.clone(), emul.clone()));

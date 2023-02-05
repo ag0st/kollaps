@@ -25,7 +25,7 @@ pub use error::ErrorProducer;
 pub use subnet::{Subnet, IpMask, ToSocketAddr};
 
 // Exporting tc messages for communication between main app en reporter
-pub use tc_message::{EmulMessage, FlowConf, TCConf, EmulationEvent, EventAction, EmulBeginTime};
+pub use tc_message::{EmulMessage, FlowConf, TCConf, EmulationEvent, EventAction};
 
 // Exporting topology messages for the pubapi and the client
 pub use topology_message::{OManagerMessage, TopologyRejectReason};

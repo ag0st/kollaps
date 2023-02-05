@@ -1,11 +1,12 @@
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::net::IpAddr;
-use std::time::{Duration, Instant};
+use std::time::{Duration};
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use crate::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
 
+use crate::{deserialize, Error, ErrorKind, Result, serialize, ToBytesSerialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TCConf {
@@ -60,12 +61,6 @@ impl FlowConf {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct EmulBeginTime {
-    #[serde(with = "serde_millis")]
-    pub time: Instant,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum EmulMessage {
     FlowUpdate(FlowConf),
     TCInit(TCConf),
@@ -74,8 +69,6 @@ pub enum EmulMessage {
     TCReconnect,
     TCTeardown,
     SocketReady,
-    EmulStart(EmulBeginTime),
-    EmulStartOk,
     Event(EmulationEvent),
 }
 
@@ -112,7 +105,6 @@ impl EmulMessage {
                 let fl_conf = deserialize::<FlowConf>(data)?;
                 Ok(EmulMessage::FlowUpdate(fl_conf))
             }
-            0x0002 => Ok(EmulMessage::EmulStartOk),
             0x0003 if data.is_some() => {
                 let data = data.as_deref().unwrap_or("");
                 let tc_conf = deserialize::<TCConf>(data)?;
@@ -132,11 +124,6 @@ impl EmulMessage {
                 let event = deserialize::<EmulationEvent>(data)?;
                 Ok(EmulMessage::Event(event))
             }
-            0x000A if data.is_some() => {
-                let data = data.as_deref().unwrap_or("");
-                let time = deserialize::<EmulBeginTime>(data)?;
-                Ok(EmulMessage::EmulStart(time))
-            }
             _ => Err(Error::new("opcode to tc_message", ErrorKind::OpcodeNotRecognized, &*format!("cannot decrypt {opcode}.")))
         }
     }
@@ -144,7 +131,6 @@ impl EmulMessage {
     pub fn event_2_opcode(com: &EmulMessage) -> u16 {
         match com {
             EmulMessage::FlowUpdate(_) => 0x0001,
-            EmulMessage::EmulStartOk => 0x0002,
             EmulMessage::TCInit(_) => 0x0003,
             EmulMessage::TCUpdate(_) => 0x0004,
             EmulMessage::TCDisconnect => 0x0005,
@@ -152,7 +138,6 @@ impl EmulMessage {
             EmulMessage::TCTeardown => 0x0007,
             EmulMessage::SocketReady => 0x0008,
             EmulMessage::Event(_) => 0x0009,
-            EmulMessage::EmulStart(_) => 0x000A,
         }
     }
 }
@@ -194,8 +179,6 @@ impl Display for EmulMessage {
             EmulMessage::TCReconnect => write!(f, "TCReconnect"),
             EmulMessage::TCTeardown => write!(f, "TCTeardown"),
             EmulMessage::SocketReady => write!(f, "SocketReady"),
-            EmulMessage::EmulStart(_) => write!(f, "EmulationStart"),
-            EmulMessage::EmulStartOk => write!(f, "EmulationStartOk"),
             EmulMessage::Event(_) => write!(f, "EmulationEvent"),
         }
     }

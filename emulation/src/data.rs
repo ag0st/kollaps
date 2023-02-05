@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -223,17 +224,15 @@ impl Hash for Node {
 /// Represent an experiment
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Emulation {
-    leader: ClusterNodeInfo,
     uuid: String,
     pub graph: Network<Node>,
     pub events: Vec<EmulationEvent>,
 }
 
 impl Emulation {
-    pub fn build(uuid: Uuid, graph: &Network<Node>, events: &Vec<EmulationEvent>, leader: ClusterNodeInfo) -> Emulation {
+    pub fn build(uuid: Uuid, graph: &Network<Node>, events: &Vec<EmulationEvent>) -> Emulation {
         let events_clone = events.iter().map(|e| e.clone()).collect();
         Emulation {
-            leader,
             uuid: uuid.to_string(),
             graph: graph.clone(),
             events: events_clone,
@@ -242,14 +241,6 @@ impl Emulation {
 
     pub fn uuid(&self) -> Uuid {
         parse_uuid_or_crash(self.uuid.clone())
-    }
-
-    pub fn am_i_leader(&self, myself: &ClusterNodeInfo) -> bool {
-        self.leader.eq(myself)
-    }
-
-    pub fn leader(&self) -> ClusterNodeInfo {
-        self.leader.clone()
     }
 }
 
@@ -315,6 +306,20 @@ impl<'a, T: netgraph::Vertex> Debug for Flow<'a, T> {
         std::fmt::Display::fmt(&self, f)
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EmulBeginTime {
+    #[serde(with = "serde_millis")]
+    pub time: Instant,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ECSynchroMessage {
+    EmulStart(EmulBeginTime),
+    EmulStartOk,
+}
+
+impl ToBytesSerialize for ECSynchroMessage {}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum EManagerMessage {
