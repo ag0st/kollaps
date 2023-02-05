@@ -98,40 +98,41 @@ fn get_flows_by_shared_links<'a, T: netgraph::Vertex>(flow_updated: &Flow<'a, T>
     })
 }
 
-
-fn get_shared_links_and_impacted_flows<'a, T: netgraph::Vertex>(flow_updated: &Flow<'a, T>, all_flows: &HashSet<Flow<'a, T>>, graph: &netgraph::Network<T>) -> (HashSet<netgraph::Link<T>>, HashSet<Flow<'a, T>>) {
-    let flow_path = graph.get_path_between(&flow_updated.source, &flow_updated.destination).unwrap();
-    // Get the links that are shared by the flows and the flows that share links with the new flow
-    all_flows.iter()
-        .filter_map(|f| {
-            let path = graph.get_path_between(&f.source, &f.destination).unwrap();
-            let shared = flow_path.shared_edges(&path);
-            if shared.is_empty() {
-                None
-            } else {
-                Some((shared, f.clone()))
-            }
-        }).fold(
-        (HashSet::new(), HashSet::new()),
-        |(acc_set, mut acc_flows), (set, flow)| {
-            ({
-                 // ignore ourself, if we put ourself, we will not get "only" the shared edges but
-                 // also all edge that I share with myself, so all my edges.
-                 if flow.ne(flow_updated) {
-                     acc_set.union(&set)
-                         .map(|e| e.clone())
-                         .collect()
-                 } else {
-                     acc_set
-                 }
-             }, {
-                 // do not ignore myself here because I am impacted too!
-                 acc_flows.insert(flow);
-                 acc_flows
-             })
-        },
-    )
-}
+// Legacy code, keep it just in case, need to be removed after refactoring
+//
+// fn get_shared_links_and_impacted_flows<'a, T: netgraph::Vertex>(flow_updated: &Flow<'a, T>, all_flows: &HashSet<Flow<'a, T>>, graph: &netgraph::Network<T>) -> (HashSet<netgraph::Link<T>>, HashSet<Flow<'a, T>>) {
+//     let flow_path = graph.get_path_between(&flow_updated.source, &flow_updated.destination).unwrap();
+//     // Get the links that are shared by the flows and the flows that share links with the new flow
+//     all_flows.iter()
+//         .filter_map(|f| {
+//             let path = graph.get_path_between(&f.source, &f.destination).unwrap();
+//             let shared = flow_path.shared_edges(&path);
+//             if shared.is_empty() {
+//                 None
+//             } else {
+//                 Some((shared, f.clone()))
+//             }
+//         }).fold(
+//         (HashSet::new(), HashSet::new()),
+//         |(acc_set, mut acc_flows), (set, flow)| {
+//             ({
+//                  // ignore ourself, if we put ourself, we will not get "only" the shared edges but
+//                  // also all edge that I share with myself, so all my edges.
+//                  if flow.ne(flow_updated) {
+//                      acc_set.union(&set)
+//                          .map(|e| e.clone())
+//                          .collect()
+//                  } else {
+//                      acc_set
+//                  }
+//              }, {
+//                  // do not ignore myself here because I am impacted too!
+//                  acc_flows.insert(flow);
+//                  acc_flows
+//              })
+//         },
+//     )
+// }
 
 fn distribute_bandwidth_across_flow<'a, T: netgraph::Vertex>(link: Link<T>, mut flows: HashSet<Flow<'a, T>>) -> HashSet<Flow<'a, T>> {
     // The calculation is based on the slowest link and the flows that need to go through.

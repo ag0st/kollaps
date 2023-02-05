@@ -489,7 +489,7 @@ impl Ctrl {
         // add myself to the node
         let me = self.cgraph.add_node(self.my_speed, self.my_info.clone())?;
 
-        while let Some(other) = self.cgraph.find_missing_from_me(me.clone(), sufficient_speed) {
+        while let Some(other) = self.cgraph.find_missing_from_me(me.clone(), sufficient_speed)? {
             println!("[PERF]: Missing information between me and {}, starting test...", other.info());
             // make the test against the other node
 

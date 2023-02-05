@@ -92,7 +92,7 @@ impl OManager {
                 let m = mess.clone();
                 if self.my_info_emanager.eq(node) {
                     if let Err(e) = self.local_sender.send(MessageWrapper { message: m, sender: None }).await {
-                        println!("[WARNING]: Wanted to abort emulation {} on local machine, error", uuid.to_string());
+                        println!("[WARNING]: Wanted to abort emulation {} on local machine, error: {}", uuid.to_string(), e);
                     }
                 } else {
                     let mut binding: TCPBinding<EManagerMessage, NoHandler> = TCP::bind(None).await.unwrap();
