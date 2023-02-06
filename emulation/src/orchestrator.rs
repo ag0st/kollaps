@@ -476,7 +476,7 @@ mod test {
         let mut all_nodes: Vec<cgraph::Node<ClusterNodeInfo>> = Vec::new();
         for i in 0..10 {
             // create a random cluster node info
-            let info = ClusterNodeInfo::new(IpAddr::from([192, 168, 1, i as u8 + 1]), cmanager_port);
+            let info = ClusterNodeInfo::new(IpAddr::from([192, 168, 1, i as u8 + 1]), emanager_port);
             let node = cgraph.add_node(1000, info).unwrap();
             all_nodes.push(node);
             for j in 0..i {
@@ -516,10 +516,16 @@ mod test {
             // compute the max
             let max = orch.current_load.iter().map(|(_, loads)| loads.iter().fold(0, |acc, (_, load)| acc + load)).max().unwrap();
             let min = orch.current_load.iter().map(|(_, loads)| loads.iter().fold(0, |acc, (_, load)| acc + load)).min().unwrap();
-            println!("{} \t {} \t {} \t {}", number_of_experiments, max, min, max - min);
-            for distrib in &orch.current_load {
-                println!("{:?}", distrib);
+            print!("{} \t", number_of_experiments);
+            for i in 0..all_nodes.len() {
+                let dep = if let Some(map) = orch.current_load.get(&all_nodes[i].info()) {
+                  map.iter().map(|(_, l)| l).fold(0, |acc, v| acc + v)
+                } else {
+                    0
+                };
+                print!("{} \t", dep);
             }
+            print!("\n");
         }
         assert_eq!(number_of_experiments, 13);
     }
